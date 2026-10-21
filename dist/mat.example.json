@@ -1,0 +1,23 @@
+{
+  // Срок хранения по умолчанию для всех камер, дней
+  "defaultRetentionDays": 90,
+
+  // Камеры с другим сроком. Ключ — имя камеры как в Macroscop или её GUID.
+  "cameraRetentionDays": {
+    "Офис центр": 14,
+    "Вход": 14,
+    "Ворота": 14
+  },
+
+  // Камера «тяжёлая», если пишет в сутки во столько раз больше медианной камеры сервера
+  "heavyFactor": 2.5,
+
+  // Пусто = искать X:\MacroscopArchive на всех дисках
+  "archiveRoots": [],
+
+  // null = C:\ProgramData\Macroscop\Logs_Macroscop
+  "logsDir": null,
+
+  // Сколько дисков сканировать параллельно
+  "scanThreads": 4
+}

@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+reports/
+.vs/
+*.user
+*.suo
+mat.json
+*.zip

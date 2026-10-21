@@ -1,0 +1,231 @@
+using System.Globalization;
+using System.Net;
+using System.Text;
+
+namespace MacroscopArchiveTool.Core;
+
+/// <summary>Self-contained HTML report for one or several servers (no external files or CDNs).</summary>
+public static class HtmlReport
+{
+    private static readonly CultureInfo Ru = CultureInfo.GetCultureInfo("ru-RU");
+
+    public static string Render(IReadOnlyList<ScanReport> reports)
+    {
+        var sb = new StringBuilder(64 * 1024);
+        var title = reports.Count == 1 ? $"Архив Macroscop — {reports[0].ServerName}" : "Архив Macroscop — сводный отчёт";
+        sb.Append("<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">")
+          .Append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+          .Append("<title>").Append(H(title)).Append("</title><style>").Append(Css).Append("</style></head><body><main>");
+
+        sb.Append("<header><h1>").Append(H(title)).Append("</h1><p class=\"muted\">Сформирован ")
+          .Append(H(DateTime.Now.ToString("dd.MM.yyyy HH:mm", Ru)))
+          .Append(" · MacroscopArchiveTool ").Append(H(reports.FirstOrDefault()?.ToolVersion ?? ToolInfo.Version))
+          .Append("</p></header>");
+
+        if (reports.Count > 1) RenderOverall(sb, reports);
+        foreach (var r in reports) RenderServer(sb, r, reports.Count > 1);
+        RenderCameras(sb, reports);
+        RenderNotes(sb);
+
+        sb.Append("</main><script>").Append(Js).Append("</script></body></html>");
+        return sb.ToString();
+    }
+
+    private static void RenderOverall(StringBuilder sb, IReadOnlyList<ScanReport> reports)
+    {
+        var total = reports.Sum(r => r.Drives.Sum(d => d.MediaBytes));
+        var rate = reports.Sum(ReportAnalyzer.DailyRate);
+        sb.Append("<section><h2>Все серверы</h2><div class=\"cards\">");
+        Card(sb, "Серверов", reports.Count.ToString(Ru));
+        Card(sb, "Камер", reports.Sum(r => r.Cameras.Count).ToString(Ru));
+        Card(sb, "Видео в архиве", Bytes(total));
+        Card(sb, "Пишется в сутки", Bytes((long)rate));
+        sb.Append("</div></section>");
+    }
+
+    private static void RenderServer(StringBuilder sb, ScanReport r, bool multi)
+    {
+        var rate = ReportAnalyzer.DailyRate(r);
+        var headroom = ReportAnalyzer.HeadroomDays(r);
+        var maxDepth = r.Cameras.Count > 0 ? r.Cameras.Max(c => c.DepthDays) : 0;
+        var heavy = r.Cameras.Count(c => c.IsHeavy);
+        var over = r.Cameras.Count(c => c.ExceedsRetention);
+
+        sb.Append("<section><h2>").Append(H(multi ? $"Сервер «{r.ServerName}»" : "Сводка")).Append("</h2>")
+          .Append("<p class=\"muted\">").Append(H(r.MachineName)).Append(" · скан ")
+          .Append(H(r.ScannedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm", Ru)))
+          .Append(" · ").Append(r.ScanSeconds.ToString("0.#", Ru)).Append(" с</p><div class=\"cards\">");
+        Card(sb, "Видео в архиве", Bytes(r.Drives.Sum(d => d.MediaBytes)), $"{r.Cameras.Count} камер, {r.Drives.Count} дисков");
+        Card(sb, "Пишется в сутки", Bytes((long)rate), $"≈ {(rate * 8 / 86400 / 1e6).ToString("0.#", Ru)} Мбит/с");
+        Card(sb, "Макс. глубина", $"{maxDepth.ToString("0", Ru)} дн.");
+        var sizesKnown = r.Drives.Any(d => d.IsActive && d.TotalBytes > 0);
+        Card(sb, "Свободно на активных дисках", sizesKnown ? Bytes(ReportAnalyzer.ActiveFreeBytes(r)) : "—",
+             sizesKnown && headroom.HasValue ? $"≈ {headroom.Value.ToString("0", Ru)} дн. до заполнения" : null);
+        Card(sb, "Тяжёлые камеры", heavy.ToString(Ru), heavy > 0 ? $"пишут в {r.HeavyFactor.ToString("0.#", Ru)} раза больше медианы" : null, heavy > 0 ? "warn" : null);
+        Card(sb, "Сверх срока хранения", over.ToString(Ru), over > 0 ? "есть записи старше лимита" : "нарушений нет", over > 0 ? "bad" : "ok");
+        sb.Append("</div>");
+
+        foreach (var w in r.Warnings) sb.Append("<p class=\"warning\">⚠ ").Append(H(w)).Append("</p>");
+
+        sb.Append("<h3>Диски</h3><div class=\"scroll\"><table class=\"sortable\"><thead><tr>")
+          .Append(Th("Диск")).Append(Th("Метка")).Append(Th("Размер", true)).Append(Th("Свободно", true))
+          .Append(Th("Заполнение", true)).Append(Th("Видео", true)).Append(Th("БД", true)).Append(Th("Прочее в архиве", true))
+          .Append(Th("Вне архива", true)).Append(Th("Камер", true)).Append(Th("Самая старая", true)).Append(Th("Последняя запись", true))
+          .Append(Th("Статус")).Append("</tr></thead><tbody>");
+        foreach (var d in r.Drives)
+        {
+            var known = d.TotalBytes > 0;
+            var pct = known ? (double)d.UsedBytes / d.TotalBytes * 100 : 0;
+            sb.Append("<tr>")
+              .Append(Td(d.Name, cls: "strong")).Append(Td(d.VolumeLabel))
+              .Append(TdN(known ? Bytes(d.TotalBytes) : "—", d.TotalBytes)).Append(TdN(known ? Bytes(d.FreeBytes) : "—", d.FreeBytes));
+            if (known)
+                sb.Append("<td class=\"num\" data-v=\"").Append(Inv(pct)).Append("\"><div class=\"bar\"><span style=\"width:")
+                  .Append(Inv(Math.Min(100, pct))).Append("%\"").Append(pct >= 95 ? " class=\"full\"" : "").Append("></span></div>")
+                  .Append(pct.ToString("0", Ru)).Append("%</td>");
+            else sb.Append("<td class=\"num muted\" data-v=\"-1\">—</td>");
+            sb.Append(TdN(Bytes(d.MediaBytes), d.MediaBytes)).Append(TdN(Bytes(d.DbBytes), d.DbBytes))
+              .Append(TdN(Bytes(d.OtherArchiveBytes), d.OtherArchiveBytes))
+              .Append(TdN(known ? Bytes(d.NonArchiveBytes) : "—", d.NonArchiveBytes, known && d.NonArchiveBytes > d.TotalBytes * 0.1 ? "warn" : null))
+              .Append(TdN(d.CameraCount.ToString(Ru), d.CameraCount))
+              .Append(TdDate(d.OldestUtc)).Append(TdDate(d.NewestUtc, withTime: true))
+              .Append(d.IsActive ? Td("пишется", cls: "ok") : Td("без записи > 24 ч", cls: "muted"))
+              .Append("</tr>");
+        }
+        sb.Append("</tbody></table></div></section>");
+    }
+
+    private static void RenderCameras(StringBuilder sb, IReadOnlyList<ScanReport> reports)
+    {
+        bool multi = reports.Count > 1;
+        sb.Append("<section><h2>Камеры</h2><p class=\"muted\">Отсортировано по объёму записи в сутки. Щёлкните заголовок, чтобы сменить сортировку.</p>")
+          .Append("<input id=\"filter\" type=\"search\" placeholder=\"Фильтр по имени камеры…\" aria-label=\"Фильтр по имени камеры\">")
+          .Append("<div class=\"scroll\"><table class=\"sortable\" id=\"cams\"><thead><tr>")
+          .Append(Th("Камера"));
+        if (multi) sb.Append(Th("Сервер"));
+        sb.Append(Th("В сутки", true)).Append(Th("Ср. поток", true)).Append(Th(multi ? "Доля на сервере" : "Доля", true))
+          .Append(Th("Объём", true)).Append(Th("Глубина", true)).Append(Th("Срок", true))
+          .Append(Th("Самая старая", true)).Append(Th("Дисков", true)).Append(Th("Отметки"))
+          .Append("</tr></thead><tbody>");
+
+        foreach (var (r, c) in reports.SelectMany(r => r.Cameras.Select(c => (r, c))).OrderByDescending(x => x.c.BytesPerDay))
+        {
+            var flags = new List<string>();
+            if (c.IsHeavy) flags.Add("<span class=\"tag warn\">тяжёлая</span>");
+            if (c.ExceedsRetention) flags.Add("<span class=\"tag bad\">сверх срока</span>");
+            sb.Append("<tr").Append(c.ExceedsRetention ? " class=\"rowbad\"" : c.IsHeavy ? " class=\"rowwarn\"" : "").Append(">")
+              .Append(Td(c.Name, cls: "strong", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
+            if (multi) sb.Append(Td(r.ServerName));
+            sb.Append(TdN(Bytes((long)c.BytesPerDay), c.BytesPerDay))
+              .Append(TdN(c.AvgMbitPerSec.ToString("0.0", Ru) + " Мбит/с", c.AvgMbitPerSec))
+              .Append("<td class=\"num\" data-v=\"").Append(Inv(c.SharePercent)).Append("\"><div class=\"bar small\"><span style=\"width:")
+              .Append(Inv(Math.Min(100, c.SharePercent * 3))).Append("%\"></span></div>").Append(c.SharePercent.ToString("0.0", Ru)).Append("%</td>")
+              .Append(TdN(Bytes(c.Bytes), c.Bytes))
+              .Append(TdN(c.DepthDays.ToString("0", Ru) + " дн.", c.DepthDays, c.ExceedsRetention ? "bad" : null))
+              .Append(TdN(c.RetentionDays.HasValue ? c.RetentionDays.Value + " дн." : "—", c.RetentionDays ?? 0))
+              .Append(TdDate(c.OldestUtc))
+              .Append(TdN(c.BytesByDrive.Count > 0 ? c.BytesByDrive.Count.ToString(Ru) : "—", c.BytesByDrive.Count))
+              .Append("<td>").Append(string.Join(" ", flags)).Append("</td></tr>");
+        }
+        sb.Append("</tbody></table></div></section>");
+    }
+
+    private static void RenderNotes(StringBuilder sb) => sb.Append(
+        "<section class=\"notes\"><h2>Как читать отчёт</h2><ul>" +
+        "<li><b>В сутки / Ср. поток</b> — объём архива камеры, делённый на глубину. Для записи по движению это среднее, пиковый поток выше.</li>" +
+        "<li><b>Глубина</b> — сколько дней назад сделана самая старая запись камеры. Перерывы в записи не учитываются.</li>" +
+        "<li><b>Тяжёлая</b> — камера пишет в сутки в heavyFactor раз больше медианной камеры своего сервера (по умолчанию 2,5; задаётся в mat.json).</li>" +
+        "<li><b>Сверх срока</b> — самая старая запись старше срока хранения камеры из mat.json больше чем на сутки.</li>" +
+        "<li><b>Вне архива</b> — место на томе, занятое не папкой MacroscopArchive. Большие значения часто означают забытые данные.</li>" +
+        "<li><b>До заполнения</b> — грубая оценка по свободному месту дисков, куда шла запись за сутки. Лимиты Macroscop «Мин. своб. место» и «Макс. размер архива» не учитываются.</li>" +
+        "</ul></section>");
+
+    // ---- helpers ----
+    private static void Card(StringBuilder sb, string label, string value, string? sub = null, string? cls = null)
+    {
+        sb.Append("<div class=\"card").Append(cls != null ? " " + cls : "").Append("\"><div class=\"label\">").Append(H(label))
+          .Append("</div><div class=\"value\">").Append(H(value)).Append("</div>");
+        if (sub != null) sb.Append("<div class=\"sub\">").Append(H(sub)).Append("</div>");
+        sb.Append("</div>");
+    }
+
+    private static string Th(string text, bool numeric = false)
+        => $"<th{(numeric ? " class=\"num\"" : "")} tabindex=\"0\">{H(text)}</th>";
+
+    private static string Td(string text, string? cls = null, string? title = null)
+        => $"<td{(cls != null ? $" class=\"{cls}\"" : "")}{(title != null ? $" title=\"{H(title)}\"" : "")}>{H(text)}</td>";
+
+    private static string TdN(string text, double sortValue, string? extraCls = null)
+        => $"<td class=\"num{(extraCls != null ? " " + extraCls : "")}\" data-v=\"{Inv(sortValue)}\">{H(text)}</td>";
+
+    private static string TdDate(DateTime? utc, bool withTime = false)
+        => utc.HasValue
+            ? $"<td class=\"num\" data-v=\"{utc.Value.Ticks}\">{H(utc.Value.ToLocalTime().ToString(withTime ? "dd.MM.yyyy HH:mm" : "dd.MM.yyyy", Ru))}</td>"
+            : "<td class=\"num\" data-v=\"0\">—</td>";
+
+    private static string Inv(double v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+
+    /// <summary>Escapes only HTML-significant characters, so Cyrillic and «» stay readable in the source.</summary>
+    private static string H(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        var sb = new StringBuilder(s.Length + 8);
+        foreach (var ch in s)
+            sb.Append(ch switch { '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"' => "&quot;", '\'' => "&#39;", _ => ch.ToString() });
+        return sb.ToString();
+    }
+
+    public static string Bytes(long b)
+    {
+        string[] u = { "Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ" };
+        double v = b; int i = 0;
+        while (Math.Abs(v) >= 1024 && i < u.Length - 1) { v /= 1024; i++; }
+        return v.ToString(v >= 100 || i == 0 ? "0" : "0.#", Ru) + " " + u[i];
+    }
+
+    private const string Css = """
+:root{--bg:#f6f7f9;--panel:#fff;--text:#1d2330;--muted:#6a7383;--line:#e3e6eb;--accent:#2a6fdb;--warn:#b7791f;--warn-bg:#fdf3e1;--bad:#c53030;--bad-bg:#fdecec;--ok:#2f855a;--bar:#d7dde6}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--panel:#1c2027;--text:#e6e9ef;--muted:#9aa3b2;--line:#2c323c;--accent:#6aa0ff;--warn:#f0b35a;--warn-bg:#3a2e17;--bad:#ff7b7b;--bad-bg:#3d1f22;--ok:#5cc490;--bar:#343b47}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+main{max-width:1400px;margin:0 auto;padding:24px 16px 48px}h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:0 0 8px}h3{font-size:15px;margin:20px 0 8px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin:16px 0}header{margin-bottom:8px}
+.muted{color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:12px}
+.card{border:1px solid var(--line);border-radius:8px;padding:12px}.card .label{color:var(--muted);font-size:12px}.card .value{font-size:22px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+.card .sub{color:var(--muted);font-size:12px;margin-top:2px}.card.warn{border-color:var(--warn)}.card.bad{border-color:var(--bad)}.card.bad .value{color:var(--bad)}.card.ok .value{color:var(--ok)}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);font-weight:600;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}th:hover,th:focus{color:var(--text);outline:none}
+th.asc::after{content:" ▲"}th.desc::after{content:" ▼"}.num{text-align:right}.strong{font-weight:600}.ok{color:var(--ok)}td.warn{color:var(--warn);font-weight:600}td.bad{color:var(--bad);font-weight:600}
+tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600}
+.tag.warn{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}.tag.bad{background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad)}
+.bar{display:inline-block;width:70px;height:7px;background:var(--bar);border-radius:4px;margin-right:6px;vertical-align:middle;overflow:hidden}.bar.small{width:50px}
+.bar span{display:block;height:100%;background:var(--accent)}.bar span.full{background:var(--bad)}.warning{color:var(--warn);margin:6px 0}
+#filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
+.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
+@media print{section{break-inside:avoid}#filter{display:none}}
+""";
+
+    private const string Js = """
+document.querySelectorAll('table.sortable').forEach(function(t){
+  t.querySelectorAll('th').forEach(function(th,i){
+    function sort(){
+      var asc=!th.classList.contains('asc');
+      t.querySelectorAll('th').forEach(function(x){x.classList.remove('asc','desc')});
+      th.classList.add(asc?'asc':'desc');
+      var b=t.tBodies[0],rows=Array.from(b.rows);
+      rows.sort(function(a,c){
+        var x=a.cells[i],y=c.cells[i];
+        var vx=x.dataset.v!==undefined?parseFloat(x.dataset.v):x.textContent.toLowerCase();
+        var vy=y.dataset.v!==undefined?parseFloat(y.dataset.v):y.textContent.toLowerCase();
+        return (vx<vy?-1:vx>vy?1:0)*(asc?1:-1);
+      });
+      rows.forEach(function(r){b.appendChild(r)});
+    }
+    th.addEventListener('click',sort);
+    th.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();sort();}});
+  });
+});
+var f=document.getElementById('filter');
+if(f){f.addEventListener('input',function(){var q=f.value.toLowerCase();
+  document.querySelectorAll('#cams tbody tr').forEach(function(r){r.style.display=r.cells[0].textContent.toLowerCase().indexOf(q)>=0?'':'none'});});}
+""";
+}

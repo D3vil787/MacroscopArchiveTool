@@ -1,0 +1,43 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Self-test (fake archive on real Windows paths)
+        run: dotnet run -c Release --project tests/MacroscopArchiveTool.SelfTest
+
+      - name: Publish single self-contained exe (win-x64)
+        run: dotnet publish src/MacroscopArchiveTool.Cli -c Release -r win-x64 -o publish
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath MacroscopArchiveTool-win-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacroscopArchiveTool-win-x64
+          path: publish/
+
+      - name: GitHub Release (tags v* only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create ${{ github.ref_name }} MacroscopArchiveTool-win-x64.zip --title ${{ github.ref_name }} --generate-notes
