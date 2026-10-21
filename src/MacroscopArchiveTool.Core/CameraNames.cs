@@ -14,11 +14,12 @@ public sealed class CameraNames
         RegexOptions.Compiled);
 
     private static readonly Regex ServerLine = new(
-        @"^\s*id:\s*[0-9a-fA-F-]{36},\s*port:.*?name:\s*(?<name>.+?)(?:\s+isReplicationServer.*)?\s*$",
+        @"^\s*id:\s*(?<id>[0-9a-fA-F-]{36}),\s*port:.*?name:\s*(?<name>.+?)(?:\s+isReplicationServer.*)?\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
     public Dictionary<string, string> ById { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string? ServerName { get; private set; }
+    public string? ServerId { get; private set; }
     public string? SourceFile { get; private set; }
 
     /// <summary>Normalizes a GUID to the media-folder form: 32 lowercase hex chars without dashes.</summary>
@@ -53,7 +54,11 @@ public sealed class CameraNames
             ById[Normalize(m.Groups["id"].Value)] = m.Groups["name"].Value.Trim();
 
         var s = ServerLine.Match(text);
-        if (s.Success) ServerName = s.Groups["name"].Value.Trim();
+        if (s.Success)
+        {
+            ServerName = s.Groups["name"].Value.Trim();
+            ServerId = s.Groups["id"].Value.Trim();
+        }
     }
 
     /// <summary>Reads a file that Macroscop may still hold open for writing.</summary>

@@ -10,6 +10,8 @@ public sealed class ScanReport
     public double ScanSeconds { get; set; }
     public int DefaultRetentionDays { get; set; }
     public double HeavyFactor { get; set; }
+    /// <summary>Where camera retention came from, e.g. "конфигурация Macroscop (копия от …)".</summary>
+    public string RetentionSource { get; set; } = "";
     public List<DriveStat> Drives { get; set; } = new();
     public List<CameraStat> Cameras { get; set; } = new();
     public List<string> Warnings { get; set; } = new();
@@ -58,7 +60,12 @@ public sealed class CameraStat
     public DateTime? NewestUtc { get; set; }
     public int FragmentCount { get; set; }
     public Dictionary<string, long> BytesByDrive { get; set; } = new();
+    /// <summary>Effective retention used for the overrun check (Macroscop "max" depth, or mat.json).</summary>
     public int? RetentionDays { get; set; }
+    /// <summary>Macroscop "min" depth, when known.</summary>
+    public double? RetentionMinDays { get; set; }
+    /// <summary>"macroscop", "mat.json" or "default".</summary>
+    public string RetentionSource { get; set; } = "";
 
     // Derived values, filled by ReportAnalyzer.
     public double DepthDays { get; set; }

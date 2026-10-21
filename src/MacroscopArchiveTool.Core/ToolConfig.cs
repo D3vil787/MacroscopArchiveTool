@@ -12,6 +12,9 @@ public sealed class ToolConfig
     /// <summary>Per-camera retention, keyed by camera name or GUID (case-insensitive).</summary>
     public Dictionary<string, int> CameraRetentionDays { get; set; } = new();
 
+    /// <summary>Read per-camera retention from Macroscop configuration backups (mat.json entries still win).</summary>
+    public bool RetentionFromMacroscop { get; set; } = true;
+
     /// <summary>A camera is "heavy" when it writes this many times more than the median camera.</summary>
     public double HeavyFactor { get; set; } = 2.5;
 
@@ -47,13 +50,16 @@ public sealed class ToolConfig
     public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
 
     /// <summary>Retention for a camera: explicit by GUID, then by name, then the default.</summary>
-    public int RetentionFor(string cameraId, string cameraName)
+    public int RetentionFor(string cameraId, string cameraName) => ExplicitRetention(cameraId, cameraName) ?? DefaultRetentionDays;
+
+    /// <summary>Retention listed for this camera in mat.json (by GUID with or without dashes, or by name), else null.</summary>
+    public int? ExplicitRetention(string cameraId, string cameraName)
     {
         var map = new Dictionary<string, int>(CameraRetentionDays, StringComparer.OrdinalIgnoreCase);
         if (map.TryGetValue(cameraId, out var d)) return d;
         var dashed = CameraNames.ToDashedGuid(cameraId);
         if (dashed != null && map.TryGetValue(dashed, out d)) return d;
         if (!string.IsNullOrWhiteSpace(cameraName) && map.TryGetValue(cameraName.Trim(), out d)) return d;
-        return DefaultRetentionDays;
+        return null;
     }
 }

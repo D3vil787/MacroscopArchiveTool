@@ -65,6 +65,8 @@ public static class HtmlReport
         Card(sb, "Сверх срока хранения", over.ToString(Ru), over > 0 ? "есть записи старше лимита" : "нарушений нет", over > 0 ? "bad" : "ok");
         sb.Append("</div>");
 
+        if (!string.IsNullOrEmpty(r.RetentionSource))
+            sb.Append("<p class=\"muted\">Сроки хранения: ").Append(H(r.RetentionSource)).Append("</p>");
         foreach (var w in r.Warnings) sb.Append("<p class=\"warning\">⚠ ").Append(H(w)).Append("</p>");
 
         sb.Append("<h3>Диски</h3><div class=\"scroll\"><table class=\"sortable\"><thead><tr>")
@@ -86,10 +88,13 @@ public static class HtmlReport
             else sb.Append("<td class=\"num muted\" data-v=\"-1\">—</td>");
             sb.Append(TdN(Bytes(d.MediaBytes), d.MediaBytes)).Append(TdN(Bytes(d.DbBytes), d.DbBytes))
               .Append(TdN(Bytes(d.OtherArchiveBytes), d.OtherArchiveBytes))
-              .Append(TdN(known ? Bytes(d.NonArchiveBytes) : "—", d.NonArchiveBytes, known && d.NonArchiveBytes > d.TotalBytes * 0.1 ? "warn" : null))
+              .Append(TdN(known ? Bytes(d.NonArchiveBytes) : "—", d.NonArchiveBytes,
+                          known && d.MediaBytes > 0 && d.NonArchiveBytes > d.TotalBytes * 0.1 ? "warn" : null))
               .Append(TdN(d.CameraCount.ToString(Ru), d.CameraCount))
               .Append(TdDate(d.OldestUtc)).Append(TdDate(d.NewestUtc, withTime: true))
-              .Append(d.IsActive ? Td("пишется", cls: "ok") : Td("без записи > 24 ч", cls: "muted"))
+              .Append(d.IsActive ? Td("пишется", cls: "ok")
+                      : d.MediaBytes == 0 ? Td("без видео", cls: "muted")
+                      : Td("без записи > 24 ч", cls: "muted"))
               .Append("</tr>");
         }
         sb.Append("</tbody></table></div></section>");
@@ -122,7 +127,7 @@ public static class HtmlReport
               .Append(Inv(Math.Min(100, c.SharePercent * 3))).Append("%\"></span></div>").Append(c.SharePercent.ToString("0.0", Ru)).Append("%</td>")
               .Append(TdN(Bytes(c.Bytes), c.Bytes))
               .Append(TdN(c.DepthDays.ToString("0", Ru) + " дн.", c.DepthDays, c.ExceedsRetention ? "bad" : null))
-              .Append(TdN(c.RetentionDays.HasValue ? c.RetentionDays.Value + " дн." : "—", c.RetentionDays ?? 0))
+              .Append(RetentionCell(c))
               .Append(TdDate(c.OldestUtc))
               .Append(TdN(c.BytesByDrive.Count > 0 ? c.BytesByDrive.Count.ToString(Ru) : "—", c.BytesByDrive.Count))
               .Append("<td>").Append(string.Join(" ", flags)).Append("</td></tr>");
@@ -135,10 +140,26 @@ public static class HtmlReport
         "<li><b>В сутки / Ср. поток</b> — объём архива камеры, делённый на глубину. Для записи по движению это среднее, пиковый поток выше.</li>" +
         "<li><b>Глубина</b> — сколько дней назад сделана самая старая запись камеры. Перерывы в записи не учитываются.</li>" +
         "<li><b>Тяжёлая</b> — камера пишет в сутки в heavyFactor раз больше медианной камеры своего сервера (по умолчанию 2,5; задаётся в mat.json).</li>" +
-        "<li><b>Сверх срока</b> — самая старая запись старше срока хранения камеры из mat.json больше чем на сутки.</li>" +
+        "<li><b>Срок</b> — время хранения камеры из конфигурации Macroscop (если мин и макс различаются — «мин–макс»). Звёздочка — срок взят из mat.json. Наведите курсор, чтобы увидеть источник.</li>" +
+        "<li><b>Сверх срока</b> — самая старая запись старше максимального срока хранения камеры больше чем на сутки.</li>" +
         "<li><b>Вне архива</b> — место на томе, занятое не папкой MacroscopArchive. Большие значения часто означают забытые данные.</li>" +
         "<li><b>До заполнения</b> — грубая оценка по свободному месту дисков, куда шла запись за сутки. Лимиты Macroscop «Мин. своб. место» и «Макс. размер архива» не учитываются.</li>" +
         "</ul></section>");
+
+    private static string RetentionCell(CameraStat c)
+    {
+        if (!c.RetentionDays.HasValue) return "<td class=\"num\" data-v=\"0\">—</td>";
+        var max = c.RetentionDays.Value;
+        var text = c.RetentionMinDays is double mn && Math.Round(mn) != max ? $"{Math.Round(mn)}–{max} дн." : $"{max} дн.";
+        var src = c.RetentionSource switch
+        {
+            "macroscop" => "из конфигурации Macroscop" + (c.RetentionMinDays.HasValue ? " (мин–макс)" : ""),
+            "mat.json" => "задан в mat.json",
+            _ => "по умолчанию из mat.json",
+        };
+        var mark = c.RetentionSource == "macroscop" ? "" : "*";
+        return $"<td class=\"num\" data-v=\"{max}\" title=\"{H(src)}\">{H(text + mark)}</td>";
+    }
 
     // ---- helpers ----
     private static void Card(StringBuilder sb, string label, string value, string? sub = null, string? cls = null)

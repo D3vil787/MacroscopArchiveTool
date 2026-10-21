@@ -9,6 +9,9 @@ var tests = new List<(string Name, Action Body)>
     ("Срок хранения по имени, GUID и по умолчанию", RetentionLookup),
     ("Сканирование: объёмы, глубина, диски, отметки", ScanFakeArchive),
     ("JSON туда-обратно и сводный HTML", JsonAndHtml),
+    ("NRBF: сроки камер из бинарной конфигурации", NrbfRetention),
+    ("NRBF: дамп структуры без паролей", NrbfDumpHidesSecrets),
+    ("Сроки из ConfigsBackups: новейшая копия, приоритет mat.json", RetentionFromBackups),
 };
 
 int failed = 0;
@@ -121,6 +124,88 @@ static void Near(double expected, double actual, double tol, string what)
 
 static void True(bool cond, string what) { if (!cond) throw new Exception(what); }
 
+static void NrbfRetention()
+{
+    var bytes = FakeMacroscopConfig.Build(90, 14);
+    var (g, offsets) = MacroscopArchiveTool.Core.Nrbf.NrbfReader.ReadAll(bytes);
+    Eq(1, offsets.Count, "один поток NRBF после своего заголовка");
+    True(offsets[0] == FakeMacroscopConfig.WrapperHeader.Length, "поток найден за заголовком-обёрткой");
+    var r = MacroscopConfig.Extract(g).ToDictionary(x => x.CameraId);
+    Eq(3, r.Count, "распознано камер (слои прореживания не считаются)");
+    var heavy = r["7a1c0000000040008000000000000037"];
+    Eq(90.0, heavy.MaxDays ?? 0, "макс. срок камеры с полями в самом объекте");
+    Eq(90.0, heavy.MinDays ?? 0, "мин. срок");
+    Eq("Склад 1", heavy.Name, "имя камеры");
+    var office = r["7a1c00000000400080000000000000a1"];
+    Eq(14.0, office.MaxDays ?? 0, "14 дней у офисной камеры");
+    var nested = r["0123456789abcdef0123456789abcdef"];
+    Eq(30.0, nested.MinDays ?? 0, "мин. срок во вложенном объекте (поиск владельца)");
+    Eq(60.0, nested.MaxDays ?? 0, "макс. срок во вложенном объекте");
+    Eq("Вложенная", nested.Name, "имя из авто-свойства");
+}
+
+static void NrbfDumpHidesSecrets()
+{
+    var dir = Path.Combine(Path.GetTempPath(), "mat-dump-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try
+    {
+        var f = Path.Combine(dir, "SingleServerConfig.CmnConf");
+        System.IO.File.WriteAllBytes(f, FakeMacroscopConfig.Build(90, 14));
+        var dump = MacroscopConfig.DumpStructure(f);
+        True(!dump.Contains(FakeMacroscopConfig.Secret), "пароль камеры не попал в дамп");
+        True(!dump.Contains("192.168.1.10"), "адрес камеры не попал в дамп");
+        True(dump.Contains("Склад 1"), "имя камеры есть в дампе");
+        True(dump.Contains("Распознано камер: 3"), "итог распознавания в дампе");
+    }
+    finally { Directory.Delete(dir, true); }
+}
+
+static void RetentionFromBackups()
+{
+    using var fx = new FakeArchive();
+    const string serverId = "5e7f0000000040008000000000000001";
+    void Backup(string stamp, int heavyDays)
+    {
+        var p = Path.Combine(fx.Root1, "ConfigsBackups", stamp, serverId, "ServerConfigs", "ServerConfigs");
+        Directory.CreateDirectory(p);
+        System.IO.File.WriteAllBytes(Path.Combine(p, "SingleServerConfig.CmnConf"), FakeMacroscopConfig.Build(heavyDays, 14));
+    }
+    Backup("2026-10-20 12.00.00.000", 365);
+    Backup("2026-10-21 12.40.56.354", 30);   // newest: heavy camera 30 days
+
+    var names = CameraNames.FromLogsDir(fx.Logs);
+    Eq("5e7f0000-0000-4000-8000-000000000001", names.ServerId, "id сервера из лога");
+    var ret = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
+    Eq(3, ret.ById.Count, "камер в копии");
+    Eq(new DateTime(2026, 10, 21, 12, 40, 56, 354), ret.BackupTimeLocal ?? default, "выбрана новейшая копия");
+
+    var cfg = new ToolConfig { CameraRetentionDays = new(StringComparer.OrdinalIgnoreCase) { ["Офис центр"] = 7 } };
+    var r = new ArchiveScanner().Scan(new[] { fx.Root1, fx.Root2 }, names, cfg, macroscopRetention: ret);
+    var heavy = r.Cameras.Single(c => c.Name == "Склад 1");
+    Eq(30, heavy.RetentionDays ?? 0, "срок из конфигурации Macroscop");
+    Eq("macroscop", heavy.RetentionSource, "источник — Macroscop");
+    True(heavy.ExceedsRetention, "40 дн. при сроке 30 — сверх срока");
+    var office = r.Cameras.Single(c => c.Name == "Офис центр");
+    Eq(7, office.RetentionDays ?? 0, "mat.json важнее конфигурации");
+    Eq("mat.json", office.RetentionSource, "источник — mat.json");
+    True(r.RetentionSource.Contains("резервная копия от 21.10.2026 12:40"), "источник сроков в отчёте");
+    True(HtmlReport.Render(new[] { r }).Contains("30 дн."), "срок в HTML");
+
+    var broken = Path.Combine(fx.Root2, "ConfigsBackups", "2026-10-22 00.00.00.000", serverId, "ServerConfigs", "ServerConfigs");
+    Directory.CreateDirectory(broken);
+    System.IO.File.WriteAllBytes(Path.Combine(broken, "SingleServerConfig.CmnConf"), new byte[] { 1, 2, 3, 4, 5 });
+    var fallback = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
+    Eq(3, fallback.ById.Count, "битая новейшая копия пропущена, взята предыдущая");
+    Eq(new DateTime(2026, 10, 21, 12, 40, 56, 354), fallback.BackupTimeLocal ?? default, "время предыдущей копии");
+    True(fallback.Warnings.Count == 1 && fallback.Warnings[0].Contains("2026-10-22"), "предупреждение о пропущенной копии");
+
+    foreach (var d in Directory.GetDirectories(Path.Combine(fx.Root1, "ConfigsBackups"))) Directory.Delete(d, true);
+    var bad = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
+    Eq(0, bad.ById.Count, "только битая копия — сроков нет");
+    True(bad.Warnings.Count == 1 && bad.Warnings[0].Contains("mat.json"), "предупреждение и откат на mat.json");
+}
+
 partial class Program
 {
     internal const string SampleLog = """
@@ -198,3 +283,45 @@ sealed class FakeArchive : IDisposable
 
     public void Dispose() { try { Directory.Delete(Dir, true); } catch { } }
 }
+
+// ---- Fake Macroscop configuration, serialized with the real BinaryFormatter (test-only) ----
+#pragma warning disable SYSLIB0011
+[Serializable] sealed class FakeThinningLayer { public bool _layerEnabled = true; public double _minDeepnessInDays = 7; public double _maxDeepnessInDays = 14; public int _requiredFps = 1; }
+[Serializable] sealed class FakeConnection { public string _host = "192.168.1.10"; public string _login = "admin"; public string _password = FakeMacroscopConfig.Secret; }
+[Serializable] sealed class FakeChannelConfig
+{
+    public Guid _id; public string _name = ""; public FakeConnection _connection = new();
+    public bool _arcRecTempEnabled = true; public double _archiveMinDeepnessInDays; public double _archiveMaxDeepnessInDays;
+    public FakeThinningLayer[] _thinning = { new(), new() };
+}
+[Serializable] sealed class FakeArchiveSettings { public double _archiveMinDeepnessInDays; public double _archiveMaxDeepnessInDays; public TimeSpan _pre = TimeSpan.FromSeconds(1); }
+[Serializable] sealed class FakeNestedChannel { public Guid Id { get; set; } public string Name { get; set; } = ""; public FakeArchiveSettings Archive { get; set; } = new(); }
+[Serializable] sealed class FakeServerConfig
+{
+    public List<FakeChannelConfig> _channels = new();
+    public Dictionary<Guid, FakeNestedChannel> _nested = new();
+    public Dictionary<string, object> _misc = new() { ["port"] = 8080, ["ratio"] = 1.5m, ["when"] = new DateTime(2026, 10, 21), ["ch"] = 'Я', ["blob"] = new byte[] { 1, 2, 3 } };
+    public int[,] _grid = new int[2, 3];
+}
+
+static class FakeMacroscopConfig
+{
+    public const string Secret = "SECRET-PASS-12345";
+    public static readonly byte[] WrapperHeader = { 0x4D, 0x43, 0x46, 0x47, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFE };
+
+    public static byte[] Build(int heavyDays, int officeDays)
+    {
+        var cfg = new FakeServerConfig();
+        cfg._channels.Add(new FakeChannelConfig { _id = Guid.Parse("7a1c0000-0000-4000-8000-000000000037"), _name = "Склад 1", _archiveMinDeepnessInDays = heavyDays, _archiveMaxDeepnessInDays = heavyDays });
+        cfg._channels.Add(new FakeChannelConfig { _id = Guid.Parse("7a1c0000-0000-4000-8000-0000000000a1"), _name = "Офис центр", _archiveMinDeepnessInDays = officeDays, _archiveMaxDeepnessInDays = officeDays });
+        var nid = Guid.Parse("01234567-89ab-cdef-0123-456789abcdef");
+        cfg._nested[nid] = new FakeNestedChannel { Id = nid, Name = "Вложенная", Archive = new FakeArchiveSettings { _archiveMinDeepnessInDays = 30, _archiveMaxDeepnessInDays = 60 } };
+
+        using var ms = new MemoryStream();
+        ms.Write(WrapperHeader);
+        new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter().Serialize(ms, cfg);
+        ms.Write(new byte[] { 0xDE, 0xAD });
+        return ms.ToArray();
+    }
+}
+#pragma warning restore SYSLIB0011

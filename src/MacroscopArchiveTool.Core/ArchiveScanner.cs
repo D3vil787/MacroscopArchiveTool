@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 
 namespace MacroscopArchiveTool.Core;
 
@@ -50,7 +51,8 @@ public sealed class ArchiveScanner
     }
 
     public ScanReport Scan(IReadOnlyList<string> archiveRoots, CameraNames names, ToolConfig config,
-                           IProgress<string>? progress = null, CancellationToken ct = default)
+                           IProgress<string>? progress = null, CancellationToken ct = default,
+                           RetentionSettings? macroscopRetention = null)
     {
         var sw = Stopwatch.StartNew();
         var report = new ScanReport
@@ -94,14 +96,39 @@ public sealed class ArchiveScanner
 
         foreach (var c in cameras.Values)
         {
-            c.Name = names.Get(c.Id) ?? CameraNames.ToDashedGuid(c.Id) ?? c.Id;
-            c.RetentionDays = config.RetentionFor(c.Id, c.Name);
+            c.Name = names.Get(c.Id) ?? macroscopRetention?.ById.GetValueOrDefault(c.Id)?.Name ?? CameraNames.ToDashedGuid(c.Id) ?? c.Id;
+            ApplyRetention(c, config, macroscopRetention);
         }
+        report.RetentionSource = DescribeRetentionSource(macroscopRetention, config);
+        if (macroscopRetention != null) report.Warnings.AddRange(macroscopRetention.Warnings);
         report.Cameras = cameras.Values.ToList();
 
         ReportAnalyzer.Analyze(report, config.HeavyFactor);
         report.ScanSeconds = Math.Round(sw.Elapsed.TotalSeconds, 1);
         return report;
+    }
+
+    /// <summary>mat.json entry wins, then Macroscop's configured max depth (or min if max is unset), then the default.</summary>
+    internal static void ApplyRetention(CameraStat c, ToolConfig config, RetentionSettings? macroscop)
+    {
+        var explicitDays = config.ExplicitRetention(c.Id, c.Name);
+        var mc = macroscop?.ById.GetValueOrDefault(c.Id);
+        c.RetentionMinDays = mc?.MinDays;
+        if (explicitDays.HasValue) { c.RetentionDays = explicitDays; c.RetentionSource = "mat.json"; }
+        else if (mc != null && (mc.MaxDays ?? mc.MinDays) is double d && d > 0)
+        {
+            c.RetentionDays = (int)Math.Round(d);
+            c.RetentionSource = "macroscop";
+        }
+        else { c.RetentionDays = config.DefaultRetentionDays; c.RetentionSource = "default"; }
+    }
+
+    private static string DescribeRetentionSource(RetentionSettings? m, ToolConfig config)
+    {
+        if (m == null || m.ById.Count == 0)
+            return $"mat.json (по умолчанию {config.DefaultRetentionDays} дн.)";
+        var when = m.BackupTimeLocal.HasValue ? m.BackupTimeLocal.Value.ToString("dd.MM.yyyy HH:mm", CultureInfo.GetCultureInfo("ru-RU")) : "?";
+        return $"конфигурация Macroscop (резервная копия от {when}, камер: {m.ById.Count}); исключения — mat.json";
     }
 
     private (DriveStat, Dictionary<string, CameraStat>, List<string>) ScanRoot(string archiveRoot, DateTime nowUtc, CancellationToken ct)

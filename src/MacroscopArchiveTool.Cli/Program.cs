@@ -21,6 +21,9 @@ internal static class Program
                 "scan" => Scan(new Args(args.Skip(1))),
                 "merge" => Merge(new Args(args.Skip(1))),
                 "init-config" => InitConfig(new Args(args.Skip(1))),
+                "dump-config" => DumpConfig(new Args(args.Skip(1))),
+                "schedule" => Schedule(new Args(args.Skip(1))),
+                "unschedule" => Unschedule(),
                 "version" or "--version" => Print(ToolInfo.Version),
                 _ => Fail($"Неизвестная команда: {args[0]}. Справка: MacroscopArchiveTool help"),
             };
@@ -48,7 +51,15 @@ internal static class Program
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); Console.WriteLine("Остановка..."); };
         var progress = new Progress<string>(m => Console.WriteLine("  " + m));
-        var report = new ArchiveScanner().Scan(roots, names, config, progress, cts.Token);
+        RetentionSettings? retention = null;
+        if (config.RetentionFromMacroscop)
+        {
+            retention = MacroscopConfig.Load(roots, names.ServerId);
+            Console.WriteLine(retention.ById.Count > 0
+                ? $"Сроки хранения: {retention.ById.Count} камер из конфигурации Macroscop ({retention.SourceFile})"
+                : "Сроки хранения: из mat.json (конфигурация Macroscop не прочитана — подробности в отчёте)");
+        }
+        var report = new ArchiveScanner().Scan(roots, names, config, progress, cts.Token, retention);
 
         var outDir = a.Get("--out") ?? Path.Combine(AppContext.BaseDirectory, "reports");
         Directory.CreateDirectory(outDir);
@@ -86,6 +97,70 @@ internal static class Program
     }
 
     // init-config [--path FILE]
+    // dump-config [--file FILE] [--out FILE] [--config FILE]
+    private static int DumpConfig(Args a)
+    {
+        string? path = a.Get("--file");
+        if (path == null)
+        {
+            var config = LoadConfig(a.Get("--config"));
+            var roots = config.ArchiveRoots.Count > 0 ? config.ArchiveRoots : ArchiveScanner.FindArchiveRoots();
+            var names = CameraNames.FromLogsDir(config.LogsDir ?? ToolConfig.DefaultLogsDir);
+            var backup = MacroscopConfig.FindNewestBackup(roots) ?? throw new ArgumentException("Резервные копии конфигурации (ConfigsBackups) не найдены. Укажите --file.");
+            path = MacroscopConfig.FindConfigFile(backup, names.ServerId)?.FullName ?? throw new ArgumentException($"В копии {backup.FullName} нет файла конфигурации.");
+        }
+        var text = MacroscopConfig.DumpStructure(path);
+        var output = a.Get("--out") ?? Path.Combine(AppContext.BaseDirectory, $"dump_config_{DateTime.Now:yyyyMMdd_HHmm}.txt");
+        File.WriteAllText(output, text, new UTF8Encoding(true));
+        Console.WriteLine(text.Length > 3000 ? text[..3000] + "\n…" : text);
+        Console.WriteLine($"Полный вывод: {output}");
+        Console.WriteLine("В выводе нет строковых значений, кроме имён камер, — логины и пароли камер в него не попадают.");
+        return 0;
+    }
+
+    private const string TaskName = @"\MacroscopArchiveTool\WeeklyScan";
+
+    // schedule [--day MON] [--time 06:00]
+    private static int Schedule(Args a)
+    {
+        if (!OperatingSystem.IsWindows()) return Fail("Расписание доступно только в Windows.");
+        var day = (a.Get("--day") ?? "MON").ToUpperInvariant();
+        var time = a.Get("--time") ?? "06:00";
+        if (!System.Text.RegularExpressions.Regex.IsMatch(day, "^(MON|TUE|WED|THU|FRI|SAT|SUN)$")) return Fail("--day: MON, TUE, WED, THU, FRI, SAT или SUN");
+        if (!TimeOnly.TryParse(time, out _)) return Fail("--time в формате ЧЧ:ММ");
+
+        // schtasks /TR is limited to 261 characters, so the task runs a small .bat next to the exe.
+        var bat = Path.Combine(AppContext.BaseDirectory, "scheduled_scan.bat");
+        File.WriteAllText(bat, "@echo off\r\ncd /d \"%~dp0\"\r\nMacroscopArchiveTool.exe scan >> \"%~dp0reports\\scheduled_scan.log\" 2>&1\r\n", Encoding.ASCII);
+        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "reports"));
+
+        var code = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"\\\"{bat}\\\"\" /SC WEEKLY /D {day} /ST {time} /RU SYSTEM /RL HIGHEST /F");
+        if (code != 0) return Fail("Не удалось создать задание. Запустите от имени администратора.");
+        Console.WriteLine($"Создано задание Планировщика «{TaskName}»: скан каждую неделю, {day} в {time}, от имени SYSTEM.");
+        Console.WriteLine($"Отчёты и журнал: {Path.Combine(AppContext.BaseDirectory, "reports")}");
+        return 0;
+    }
+
+    private static int Unschedule()
+    {
+        if (!OperatingSystem.IsWindows()) return Fail("Расписание доступно только в Windows.");
+        var code = RunSchtasks($"/Delete /TN \"{TaskName}\" /F");
+        Console.WriteLine(code == 0 ? "Задание удалено." : "Задание не найдено или нет прав.");
+        return code;
+    }
+
+    private static int RunSchtasks(string arguments)
+    {
+        var psi = new ProcessStartInfo("schtasks.exe", arguments) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        using var p = Process.Start(psi)!;
+        var stdout = p.StandardOutput.ReadToEnd();
+        var stderr = p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        if (!string.IsNullOrWhiteSpace(stdout)) Console.WriteLine(stdout.Trim());
+        if (!string.IsNullOrWhiteSpace(stderr)) Console.Error.WriteLine(stderr.Trim());
+        return p.ExitCode;
+    }
+
     private static int InitConfig(Args a)
     {
         var path = a.Get("--path") ?? Path.Combine(AppContext.BaseDirectory, ConfigFileName);
@@ -135,6 +210,11 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
   merge         Свести JSON-отчёты нескольких серверов в один HTML
                   merge s1.json s2.json [-o сводный.html] [--config FILE] [--open]
   init-config   Создать mat.json с настройками сроков хранения
+  dump-config   Показать структуру конфигурации Macroscop и распознанные сроки камер (без паролей)
+                  [--file FILE] [--out FILE]
+  schedule      Еженедельный скан через Планировщик Windows (от администратора)
+                  [--day MON] [--time 06:00]
+  unschedule    Удалить еженедельный скан
   version       Показать версию
 """);
 

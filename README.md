@@ -6,7 +6,7 @@
 > **Принцип:** бинарники и базы данных Macroscop не модифицируются. Утилита работает с файлами архива
 > и штатными настройками. Сейчас всё, что она делает, — **только чтение**.
 
-## Что умеет (v0.1)
+## Что умеет (v0.1.1)
 
 **Отчёт по камерам и дискам** — `scan`:
 
@@ -17,7 +17,18 @@
 
 Результат: JSON (для истории и сведения) + самодостаточный HTML (открывается в любом браузере, без интернета).
 
+**Сроки хранения камер из конфигурации Macroscop** — без пароля и лицензий: утилита читает последнюю
+резервную копию конфигурации (`ConfigsBackups\…\SingleServerConfig.CmnConf`, формат .NET BinaryFormatter / MS-NRBF)
+собственным пассивным разборщиком — из файла ничего не загружается и не исполняется. Если новейшая копия
+повреждена, берётся предыдущая; если конфигурацию прочитать не удалось — сроки из `mat.json`.
+Ручные записи в `mat.json` всегда важнее.
+
+**Диагностика конфигурации** — `dump-config`: структура файла и распознанные сроки, без строковых значений
+(логины и пароли камер в вывод не попадают).
+
 **Сводный отчёт по нескольким серверам** — `merge`.
+
+**Еженедельный скан** — `schedule` / `unschedule` (Планировщик Windows, от имени SYSTEM).
 
 ## Быстрый старт
 
@@ -32,6 +43,9 @@
 MacroscopArchiveTool scan  [--out DIR] [--config FILE] [--roots A;B] [--logs DIR] [--threads N] [--no-html] [--open]
 MacroscopArchiveTool merge s1.json s2.json [-o сводный.html] [--config FILE] [--open]
 MacroscopArchiveTool init-config
+MacroscopArchiveTool dump-config [--file FILE] [--out FILE]
+MacroscopArchiveTool schedule [--day MON] [--time 06:00]
+MacroscopArchiveTool unschedule
 MacroscopArchiveTool version
 ```
 
@@ -39,7 +53,8 @@ MacroscopArchiveTool version
 
 | Ключ | По умолчанию | Смысл |
 |---|---|---|
-| `defaultRetentionDays` | 90 | срок хранения для камер, не указанных ниже |
+| `retentionFromMacroscop` | true | брать сроки камер из конфигурации Macroscop |
+| `defaultRetentionDays` | 90 | срок, если конфигурацию прочитать не удалось |
 | `cameraRetentionDays` | — | `{ "Имя камеры или GUID": дней }` |
 | `heavyFactor` | 2.5 | порог «тяжёлой» камеры относительно медианы сервера |
 | `archiveRoots` | все диски | явный список папок `MacroscopArchive` |
@@ -52,6 +67,7 @@ MacroscopArchiveTool version
 - `media\<GUID камеры без дефисов>\…\<фрагмент>\<блоки по 64 МиБ>` + индексные `.fidx`/`.idx`; в корне `media` — дескриптор каналов `.dsc`. Каждая камера записывается сразу на все активные диски.
 - `db` — табличное пространство PostgreSQL 16 с базой `archive_event_<GUID диска>`: там **только события** (тревоги, детектор движения, ошибки, задачи экспорта), индекса видео в БД нет.
 - Имена камер сервер пишет в `Logs_Macroscop\…\ServerConfiguration.log` (`channelId: GUID(Имя)`).
+- Настройки сервера и камер Macroscop хранит в `*.CmnConf` (BinaryFormatter); копии — в `MacroscopArchive\ConfigsBackups\<дата>\<GUID сервера>\ServerConfigs\`. Срок камеры — поля `_archiveMinDeepnessInDays` / `_archiveMaxDeepnessInDays`.
 - Роли дисков в Конфигураторе: «Не используется», «Архив + БД», «Только архив», «Резервный архив» (запись **только при отказе всех основных дисков**), «Резервный архив + БД», «Только БД»; на диск можно задать «Мин. своб. место» и «Макс. размер архива».
 
 ## План разработки
