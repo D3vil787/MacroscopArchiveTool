@@ -32,6 +32,10 @@ public sealed class RetireState
     public string? ArchiveLogicDriveId { get; set; }
     public long SourceArchiveBytes { get; set; }
     public string? SourceVolumeId { get; set; }
+    /// <summary>Windows UniqueId of the old disk and where it is (e.g. iSCSI LUN), for taking it offline.</summary>
+    public string? SourceDiskId { get; set; }
+    public string? SourceDiskLocation { get; set; }
+    public bool SourceDiskOffline { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public TargetKind TargetKind { get; set; }

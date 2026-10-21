@@ -1,5 +1,8 @@
 namespace MacroscopArchiveTool.Core.Migration;
 
+/// <summary>Physical (or iSCSI/virtual) disk that holds a volume; <paramref name="OtherLetteredVolumes"/> counts other lettered volumes on it.</summary>
+public sealed record DiskInfo(string UniqueId, int Number, string Location, int OtherLetteredVolumes);
+
 public sealed record VolumeInfo(char Letter, string Label, string FileSystem, long TotalBytes, long FreeBytes, bool IsVirtual, string? BackingFile);
 
 /// <summary>Operating-system actions needed to retire an archive drive. Real implementation: <see cref="WindowsSystemOps"/>.</summary>
@@ -15,6 +18,13 @@ public interface ISystemOps
     void CreateVhdx(string vhdxPath, long maxBytes, string label, char letter, Action<string> log);
     void AttachVhdx(string vhdxPath, Action<string> log);
     void DetachVhdx(string vhdxPath, Action<string> log);
+    /// <summary>Attaches the VHDX if Windows detached it (e.g. after a reboot) and mounts its volume at <paramref name="letter"/>.</summary>
+    void EnsureVhdxMounted(string vhdxPath, char letter, Action<string> log);
+
+    /// <summary>Disk that holds the volume at a letter, or null if it cannot be determined.</summary>
+    DiskInfo? DiskOf(char letter);
+    /// <summary>Takes a disk offline (Windows will not mount it, also after reboot) or back online without drive letters.</summary>
+    void SetDiskOffline(string uniqueId, bool offline, Action<string> log);
 
     /// <summary>Volume GUID path (\\?\Volume{…}\) currently mounted at a drive letter.</summary>
     string GetVolumeId(char letter);

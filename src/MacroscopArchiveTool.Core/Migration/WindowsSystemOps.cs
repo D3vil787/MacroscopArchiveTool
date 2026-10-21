@@ -71,6 +71,44 @@ public sealed class WindowsSystemOps : ISystemOps
     public void DetachVhdx(string vhdxPath, Action<string> log)
         => Diskpart(log, $"select vdisk file=\"{vhdxPath}\"", "detach vdisk");
 
+    public void EnsureVhdxMounted(string vhdxPath, char letter, Action<string> log)
+    {
+        if (Directory.Exists(RootOf(letter))) return;
+        log($"Подключаю виртуальный диск {vhdxPath} как {letter}:");
+        Directory.CreateDirectory(DataDir);
+        var script = Path.Combine(DataDir, $"mount_{letter}.ps1");
+        File.WriteAllText(script, AttachScript(vhdxPath, letter), new UTF8Encoding(true));
+        Checked(log, "powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\"");
+        for (int i = 0; i < 20 && !Directory.Exists(RootOf(letter)); i++) Thread.Sleep(500);
+        if (!Directory.Exists(RootOf(letter))) throw new IOException($"Виртуальный диск подключён, но том {letter}: не появился. Журнал: {Path.Combine(DataDir, "attach.log")}");
+    }
+
+    public DiskInfo? DiskOf(char letter)
+    {
+        try
+        {
+            var outp = Ps($"$p = Get-Partition -DriveLetter {letter} -ErrorAction Stop; $d = $p | Get-Disk; " +
+                          $"$o = @(Get-Partition -DiskNumber $d.Number | Where-Object {{ $_.DriveLetter -and $_.DriveLetter -ne '{letter}' }}).Count; " +
+                          "\"$($d.UniqueId)|$($d.Number)|$o|$($d.Location)\"").Trim();
+            var parts = outp.Split('|', 4);
+            if (parts.Length < 4 || parts[0].Length == 0) return null;
+            return new DiskInfo(parts[0], int.Parse(parts[1]), parts[3], int.Parse(parts[2]));
+        }
+        catch (Exception) { return null; }
+    }
+
+    public void SetDiskOffline(string uniqueId, bool offline, Action<string> log)
+    {
+        var id = uniqueId.Replace("'", "''");
+        var find = $"$d = Get-Disk | Where-Object UniqueId -eq '{id}' | Select-Object -First 1; if (-not $d) {{ throw 'Диск {id} не найден' }}; ";
+        if (offline)
+            PsChecked(log, find + "Set-Disk -Number $d.Number -IsOffline $true");
+        else
+            PsChecked(log, find + "Set-Disk -Number $d.Number -IsOffline $false; Set-Disk -Number $d.Number -IsReadOnly $false; Start-Sleep -Seconds 2; " +
+                           "Get-Partition -DiskNumber $d.Number | Where-Object DriveLetter | ForEach-Object { " +
+                           "Remove-PartitionAccessPath -DiskNumber $d.Number -PartitionNumber $_.PartitionNumber -AccessPath ('{0}:\\' -f $_.DriveLetter) }");
+    }
+
     public string GetVolumeId(char letter)
     {
         var (code, output) = Run("mountvol.exe", $"{letter}:\\ /L");

@@ -33,6 +33,7 @@ partial class Program
         R.True(!fx.Ops.Letters.ContainsKey(s.TempLetter), "временная буква освобождена");
         R.True(!fx.Ops.Letters.ContainsValue(s.SourceVolumeId!), "старый диск без буквы");
         R.True(fx.Ops.Tasks.Contains(s.AttachTaskName!), "задача автоподключения");
+        R.True(fx.Ops.OfflineDisks.Contains("disk-" + s.SourceVolumeId) && s.SourceDiskOffline, "старый диск вне сети");
         R.Eq(string.Join(",", fx.Ops.PostgresServices), string.Join(",", fx.Ops.Started), "PostgreSQL запущен обратно");
         R.Eq(3, File.ReadAllBytes(Path.Combine(fx.Ops.RootOf('J'), "MacroscopArchive", "db", "PG_16", "16400")).Length, "база скопирована при переключении");
         R.True(o.Remaining(s).Bytes > 0, "записи ещё на диске");
@@ -58,6 +59,11 @@ partial class Program
         var s = o.Plan('J', TargetKind.Vhdx, 'E', new CopyOptions { RetryDelay = TimeSpan.Zero });
         o.CreateTarget(s);
         o.CopyLive(s, null, CancellationToken.None);
+        // Simulated reboot: Windows detached the VHDX; switching must mount it again.
+        fx.Ops.Unmounted = fx.Ops.Letters[s.TempLetter];
+        fx.Ops.Letters.Remove(s.TempLetter);
+        o.CopyLive(s, null, CancellationToken.None);
+        R.Eq(1, fx.Ops.Mounts, "VHDX подключён заново после перезагрузки");
         var srcVol = fx.Ops.Letters['J'];
         fx.Ops.FailAssignTo = 'J';
         fx.Ops.MacroscopRunning = false;
@@ -65,6 +71,7 @@ partial class Program
         R.Eq(srcVol, fx.Ops.Letters['J'], "исходный диск снова J");
         R.True(fx.Ops.Letters.ContainsKey(s.TempLetter), "копия снова на временной букве");
         R.Eq(RetireStage.Copied, s.Stage, "этап не сдвинулся");
+        R.Eq(0, fx.Ops.OfflineDisks.Count, "при сбое старый диск остаётся в сети");
         R.Eq(string.Join(",", fx.Ops.PostgresServices), string.Join(",", fx.Ops.Started), "PostgreSQL запущен после ошибки");
 
         // A second attempt works and a manual rollback restores the old disk.
@@ -74,6 +81,7 @@ partial class Program
         o.Rollback(s);
         R.Eq(srcVol, fx.Ops.Letters['J'], "откат: исходный диск J");
         R.Eq(0, fx.Ops.Tasks.Count, "откат: задача удалена");
+        R.Eq(0, fx.Ops.OfflineDisks.Count, "откат: старый диск снова в сети");
     }
 
     internal static void RetirePrecheckAndCancel()
@@ -167,6 +175,25 @@ sealed class FakeSystemOps : ISystemOps
         Volumes[id] = dir;
         Letters[letter] = id;
         return id;
+    }
+
+    public readonly HashSet<string> OfflineDisks = new();
+    public int Mounts;
+
+    public void EnsureVhdxMounted(string vhdxPath, char letter, Action<string> log)
+    {
+        if (Letters.ContainsKey(letter)) return;
+        Mounts++;
+        Letters[letter] = Unmounted ?? throw new IOException("нечего подключать");
+        Unmounted = null;
+    }
+    /// <summary>A volume detached by a simulated reboot.</summary>
+    public string? Unmounted;
+
+    public DiskInfo? DiskOf(char letter) => Letters.TryGetValue(letter, out var id) ? new DiskInfo("disk-" + id, 3, "Port 2: Bus 0: Target 3: LUN 1", 0) : null;
+    public void SetDiskOffline(string uniqueId, bool offline, Action<string> log)
+    {
+        if (offline) OfflineDisks.Add(uniqueId); else OfflineDisks.Remove(uniqueId);
     }
 
     public bool IsAdministrator() => true;

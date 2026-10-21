@@ -144,6 +144,7 @@ public sealed class RetireOrchestrator
     public CopyResult CopyLive(RetireState s, IProgress<CopyProgress>? progress, CancellationToken ct, ManualResetEventSlim? pause = null)
     {
         if (s.Stage is not (RetireStage.TargetReady or RetireStage.Copied)) throw new InvalidOperationException($"Неверный этап: {s.Stage}");
+        EnsureTargetMounted(s);
         var opt = Clone(s.Options);
         opt.ExcludePrefixes.Add(DbFolder);
         Log(s, $"Копирование {ArchiveRoot(s.SourceLetter)} → {ArchiveRoot(s.TempLetter)} (Macroscop работает; база событий — на этапе переключения).");
@@ -164,6 +165,7 @@ public sealed class RetireOrchestrator
                              IProgress<CopyProgress>? progress, CancellationToken ct)
     {
         Require(s, RetireStage.Copied);
+        EnsureTargetMounted(s);
         Log(s, "Переключение: начало окна обслуживания.");
 
         if (_ops.RunningMacroscop().Count > 0 && _ops.TryStopMacroscopService(m => Log(s, m)))
@@ -196,6 +198,9 @@ public sealed class RetireOrchestrator
                 throw new IOException($"Контрольная сверка нашла расхождения ({check.FilesCopied} изменено, {check.FilesDeleted} удалено). Переключение отменено.");
             Log(s, "Сверка: копия совпадает с исходным диском.");
 
+            var disk = _ops.DiskOf(s.SourceLetter);
+            s.SourceDiskId = disk?.UniqueId;
+            s.SourceDiskLocation = disk?.Location;
             s.SourceVolumeId = _ops.GetVolumeId(s.SourceLetter);
             s.TargetVolumeId = _ops.GetVolumeId(s.TempLetter);
             Log(s, $"Исходный том {s.SourceVolumeId}, новый том {s.TargetVolumeId}.");
@@ -212,6 +217,7 @@ public sealed class RetireOrchestrator
                 Log(s, "Создана задача автоподключения виртуального диска при загрузке Windows.");
             }
 
+            TakeSourceOffline(s, disk);
             s.Stage = RetireStage.Switched;
             s.Save(_stateDir);
             return r;
@@ -282,10 +288,54 @@ public sealed class RetireOrchestrator
 
     // ------------------------------------------------------------------ helpers
 
+    /// <summary>
+    /// The old disk keeps an identical MacroscopArchive; if Windows gave it a letter again, Macroscop could see the same
+    /// archive drive twice. Offline disks are not mounted, also after a reboot, and other LUNs of the same iSCSI target keep working.
+    /// </summary>
+    private void TakeSourceOffline(RetireState s, DiskInfo? disk)
+    {
+        var where = disk == null ? "" : $"диск {disk.Number}" + (string.IsNullOrWhiteSpace(disk.Location) ? "" : $" ({disk.Location})");
+        if (disk == null)
+        {
+            Log(s, "Не удалось определить физический диск старого тома. Переведите его в режим «Вне сети» вручную в «Управлении дисками».");
+            return;
+        }
+        if (disk.OtherLetteredVolumes > 0)
+        {
+            Log(s, $"На старом диске ({where}) есть другие тома с буквами — он оставлен в сети. Буква {s.SourceLetter}: с него снята.");
+            return;
+        }
+        try
+        {
+            _ops.SetDiskOffline(disk.UniqueId, true, m => Log(s, m));
+            s.SourceDiskOffline = true;
+            Log(s, $"Старый диск ({where}) переведён в режим «Вне сети». Данные на нём не изменены; при откате он вернётся в сеть.");
+        }
+        catch (Exception ex)
+        {
+            Log(s, $"Не удалось перевести старый диск ({where}) в режим «Вне сети»: {ex.Message}. Сделайте это вручную в «Управлении дисками».");
+        }
+    }
+
+    private void BringSourceOnline(RetireState s)
+    {
+        if (!s.SourceDiskOffline || s.SourceDiskId == null) return;
+        _ops.SetDiskOffline(s.SourceDiskId, false, m => Log(s, m));
+        s.SourceDiskOffline = false;
+        Log(s, "Старый диск снова в сети.");
+    }
+
+    private void EnsureTargetMounted(RetireState s)
+    {
+        if (s.TargetKind == TargetKind.Vhdx && s.VhdxPath != null && !Directory.Exists(_ops.RootOf(s.TempLetter)))
+            _ops.EnsureVhdxMounted(s.VhdxPath, s.TempLetter, m => Log(s, m));
+    }
+
     private void RestoreLetters(RetireState s)
     {
         try
         {
+            BringSourceOnline(s);
             if (s.TargetVolumeId != null && s.SourceVolumeId != null)
             {
                 try { _ops.RemoveLetter(s.SourceLetter, m => Log(s, m)); } catch (Exception) { /* letter may be free already */ }
