@@ -192,7 +192,9 @@ public static class MacroscopConfig
             ArchiveEnabled = B("archiveEnabled"),
             ArchiveMode = E("archiveMode"),
             ArchiveStream = E("archiveStreamType"),
-            StreamFormat = E("streamFormat"),
+            // The top-level streamFormat is a legacy field (0 for every camera); the real codec is in the
+            // parameters of the stream that is written to the archive.
+            StreamFormat = SubstreamFormat(g, M(E("archiveStreamType") == 1 ? "altSubstreamParams" : "mainSubstreamParams")) ?? E("streamFormat"),
             ArchiveFpsLimitEnabled = B("arcRecTempEnabled"),
             ArchiveFpsLimit = ToDouble(M("arcRecTemp")),
             MacroscopMotionDetector = B("isMotionDetectorEnabled"),
@@ -206,6 +208,9 @@ public static class MacroscopConfig
             ResolutionCode = E("videoResolution"),
         };
     }
+
+    private static int? SubstreamFormat(NrbfGraph g, object? substream)
+        => g.Resolve(substream) is NrbfObject s ? EnumCode(g, s["streamFormat"]) : null;
 
     /// <summary>Enum values are serialized as an object with a single "value__" member.</summary>
     internal static int? EnumCode(NrbfGraph g, object? v)
@@ -396,6 +401,27 @@ public static class MacroscopConfig
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Whole object tree of any Macroscop NRBF config file (e.g. Server.SrvConf, StorageInfo), for finding where
+    /// settings live. Same rules as <see cref="DumpStructure"/>: string values are hidden except name-like members.
+    /// </summary>
+    public static string DumpTree(string path, int maxDepth = 8)
+    {
+        var sb = new StringBuilder();
+        var bytes = ReadShared(path);
+        sb.AppendLine($"Файл: {path}");
+        sb.AppendLine($"Размер: {bytes.Length:N0} байт");
+        var (g, offsets) = NrbfReader.ReadAll(bytes);
+        sb.AppendLine($"Потоков NRBF: {offsets.Count}, объектов: {g.ById.Count}");
+        var seen = new HashSet<int>();
+        foreach (var root in g.Roots)
+        {
+            sb.AppendLine().AppendLine("== Корневой объект ==");
+            Tree(sb, g, root, 1, 0, seen, maxDepth);
+        }
+        return sb.ToString();
+    }
+
     private static string F(object? v) => v switch
     {
         null => "?",
@@ -405,27 +431,27 @@ public static class MacroscopConfig
     };
 
     /// <summary>Indented dump of an object subtree; strings stay hidden except name-like members.</summary>
-    private static void Tree(StringBuilder sb, NrbfGraph g, object? v, int indent, int depth, HashSet<int> seen)
+    private static void Tree(StringBuilder sb, NrbfGraph g, object? v, int indent, int depth, HashSet<int> seen, int maxDepth = 4)
     {
         var pad = new string(' ', indent * 2);
         var r = g.Resolve(v);
         if (r is NrbfObject o)
         {
-            if (!seen.Add(o.Id) || depth > 4) { sb.AppendLine($"{pad}{{{Short(o.ClassName)} #{o.Id}}} …"); return; }
+            if (!seen.Add(o.Id) || depth > maxDepth) { sb.AppendLine($"{pad}{{{Short(o.ClassName)} #{o.Id}}} …"); return; }
             var code = EnumCode(g, o);
             if (code.HasValue) { sb.AppendLine($"{pad}{Short(o.ClassName)} = {code}"); return; }
             sb.AppendLine($"{pad}{Short(o.ClassName)}");
             foreach (var m in o.Members.Take(40))
             {
                 var mv = g.Resolve(m.Value);
-                if (mv is NrbfObject or NrbfArray) { sb.AppendLine($"{pad}  {m.Key}:"); Tree(sb, g, mv, indent + 2, depth + 1, seen); }
+                if (mv is NrbfObject or NrbfArray) { sb.AppendLine($"{pad}  {m.Key}:"); Tree(sb, g, mv, indent + 2, depth + 1, seen, maxDepth); }
                 else sb.AppendLine($"{pad}  {m.Key} = {Describe(g, m.Key, m.Value)}");
             }
         }
         else if (r is NrbfArray a)
         {
             sb.AppendLine($"{pad}[{a.Items.Count} эл.]");
-            foreach (var it in a.Items.Where(x => x != null).Take(4)) Tree(sb, g, it, indent + 1, depth + 1, seen);
+            foreach (var it in a.Items.Where(x => x != null).Take(maxDepth > 4 ? 40 : 4)) Tree(sb, g, it, indent + 1, depth + 1, seen, maxDepth);
         }
         else sb.AppendLine($"{pad}{Describe(g, "", v)}");
     }

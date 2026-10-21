@@ -139,14 +139,17 @@ static void NrbfRetention()
     Eq(true, s.ArchiveEnabled ?? false, "запись включена");
     Eq(2, s.ArchiveMode ?? -1, "код режима записи (enum)");
     Eq(1, s.ArchiveStream ?? -1, "код потока в архив");
-    Eq(3, s.StreamFormat ?? -1, "код кодека");
+    Eq(2, s.StreamFormat ?? -1, "кодек берётся из параметров потока, который пишется в архив (альтернативный)");
     Eq(12.0, s.ArchiveFpsLimit ?? 0, "лимит fps архива");
     Eq(true, s.ArchiveFpsLimitEnabled ?? false, "лимит fps включён");
     Eq(true, s.ThinningEnabled ?? false, "прореживание: включён второй слой");
     Eq(7, s.PostRecordSec ?? 0, "постзапись");
     Eq(false, s.UsesCameraFps ?? true, "свой fps");
     Eq(15.0, s.Fps ?? 0, "fps из Macroscop");
-    Eq("режим 2 · поток 1 · кодек 3 · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
+    Eq("постоянно · альтернативный поток · кодек 2 · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
+    var tree = MacroscopConfig.DumpTree(WriteTemp(FakeMacroscopConfig.Build(90, 14)));
+    True(tree.Contains("== Корневой объект ==") && tree.Contains("secChannels"), "дерево файла конфигурации");
+    True(!tree.Contains(FakeMacroscopConfig.Secret), "пароль не попал в дерево");
     var heavy = r["7a1c0000000040008000000000000037"];
     Eq(90.0, heavy.MaxDays ?? 0, "макс. срок камеры с полями в самом объекте");
     Eq(90.0, heavy.MinDays ?? 0, "мин. срок");
@@ -157,6 +160,13 @@ static void NrbfRetention()
     Eq(30.0, nested.MinDays ?? 0, "мин. срок во вложенном объекте (поиск владельца)");
     Eq(60.0, nested.MaxDays ?? 0, "макс. срок во вложенном объекте");
     Eq("Вложенная", nested.Name, "имя из авто-свойства");
+}
+
+static string WriteTemp(byte[] data)
+{
+    var p = Path.Combine(Path.GetTempPath(), "mat-tree-" + Guid.NewGuid().ToString("N") + ".CmnConf");
+    System.IO.File.WriteAllBytes(p, data);
+    return p;
 }
 
 static void NrbfDumpHidesSecrets()
@@ -316,12 +326,15 @@ sealed class FakeArchive : IDisposable
 enum FakeArchiveModes { AlwaysOn = 0, ByCommand = 1, ByMotion = 2 }
 enum FakeStreamTypes { Main = 0, Alternative = 1 }
 enum FakeVideoStreamFormats { Mjpeg = 0, Mpeg4 = 1, H264 = 2, H265 = 3 }
+[Serializable] sealed class FakeSubStream { public FakeStreamTypes streamType; public FakeVideoStreamFormats streamFormat; public int liveFrameRate = 10; }
 [Serializable] sealed class FakeThinningSettings { public FakeThinningLayer[] _layers = { new() { _layerEnabled = false }, new() { _layerEnabled = true } }; }
 /// <summary>Same member names as Alarus.Config.SecChannel in Macroscop 4.7 (see dump-config).</summary>
 [Serializable] sealed class FakeSecChannel
 {
     public Guid id; public string name = ""; public string login = "admin"; public string password = FakeMacroscopConfig.Secret;
-    public FakeVideoStreamFormats streamFormat = FakeVideoStreamFormats.H265;
+    public FakeVideoStreamFormats streamFormat = FakeVideoStreamFormats.Mjpeg;   // legacy field, 0 in real configs
+    public FakeSubStream mainSubstreamParams = new() { streamType = FakeStreamTypes.Main, streamFormat = FakeVideoStreamFormats.H265 };
+    public FakeSubStream altSubstreamParams = new() { streamType = FakeStreamTypes.Alternative, streamFormat = FakeVideoStreamFormats.H264 };
     public bool archiveEnabled = true; public FakeArchiveModes archiveMode = FakeArchiveModes.ByMotion;
     public int arcRecTemp = 12; public bool arcRecTempEnabled = true;
     public TimeSpan archiveDepth = TimeSpan.FromHours(10);

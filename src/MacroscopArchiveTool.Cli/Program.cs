@@ -109,7 +109,7 @@ internal static class Program
             var backup = MacroscopConfig.FindNewestBackup(roots) ?? throw new ArgumentException("Резервные копии конфигурации (ConfigsBackups) не найдены. Укажите --file.");
             path = MacroscopConfig.FindConfigFile(backup, names.ServerId)?.FullName ?? throw new ArgumentException($"В копии {backup.FullName} нет файла конфигурации.");
         }
-        var text = MacroscopConfig.DumpStructure(path);
+        var text = a.Has("--tree") ? MacroscopConfig.DumpTree(path) : MacroscopConfig.DumpStructure(path);
         var output = a.Get("--out") ?? Path.Combine(AppContext.BaseDirectory, $"dump_config_{DateTime.Now:yyyyMMdd_HHmm}.txt");
         File.WriteAllText(output, text, new UTF8Encoding(true));
         Console.WriteLine(text.Length > 3000 ? text[..3000] + "\n…" : text);
@@ -211,7 +211,7 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
                   merge s1.json s2.json [-o сводный.html] [--config FILE] [--open]
   init-config   Создать mat.json с настройками сроков хранения
   dump-config   Показать структуру конфигурации Macroscop и распознанные сроки камер (без паролей)
-                  [--file FILE] [--out FILE]
+                  [--file FILE] [--out FILE] [--tree]   (--tree: всё дерево файла, напр. Server.SrvConf)
   schedule      Еженедельный скан через Планировщик Windows (от администратора)
                   [--day MON] [--time 06:00]
   unschedule    Удалить еженедельный скан
@@ -221,7 +221,7 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
     /// <summary>Tiny argument parser: --key value, boolean --flags and positional values.</summary>
     private sealed class Args
     {
-        private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "--no-html", "--open" };
+        private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "--no-html", "--open", "--tree" };
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _flags = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Positional { get; } = new();

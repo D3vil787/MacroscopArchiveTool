@@ -8,10 +8,10 @@ namespace MacroscopArchiveTool.Core;
 /// </summary>
 public static class SettingNames
 {
-    /// <summary>Alarus.Config.ChannelArchiveModes.</summary>
-    public static readonly Dictionary<int, string> ArchiveModes = new();
+    /// <summary>Alarus.Config.ChannelArchiveModes (confirmed on Macroscop 4.7 against the Configurator).</summary>
+    public static readonly Dictionary<int, string> ArchiveModes = new() { [1] = "по движению", [2] = "постоянно" };
     /// <summary>Alarus.StreamTypes (stream written to the archive).</summary>
-    public static readonly Dictionary<int, string> StreamTypes = new();
+    public static readonly Dictionary<int, string> StreamTypes = new() { [0] = "основной поток", [1] = "альтернативный поток" };
     /// <summary>Alarus.Config.VideoStreamFormats.</summary>
     public static readonly Dictionary<int, string> StreamFormats = new();
 
