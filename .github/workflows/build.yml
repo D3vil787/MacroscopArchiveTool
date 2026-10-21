@@ -23,7 +23,10 @@ jobs:
       - name: Self-test (fake archive on real Windows paths)
         run: dotnet run -c Release --project tests/MacroscopArchiveTool.SelfTest
 
-      - name: Publish single self-contained exe (win-x64)
+      - name: Publish window app MacroscopArchiveTool.exe (win-x64, self-contained)
+        run: dotnet publish src/MacroscopArchiveTool.Gui -c Release -r win-x64 -o publish
+
+      - name: Publish command line mat.exe (win-x64, self-contained)
         run: dotnet publish src/MacroscopArchiveTool.Cli -c Release -r win-x64 -o publish
 
       - name: Zip

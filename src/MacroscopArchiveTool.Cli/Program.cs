@@ -131,7 +131,7 @@ internal static class Program
 
         // schtasks /TR is limited to 261 characters, so the task runs a small .bat next to the exe.
         var bat = Path.Combine(AppContext.BaseDirectory, "scheduled_scan.bat");
-        File.WriteAllText(bat, "@echo off\r\ncd /d \"%~dp0\"\r\nMacroscopArchiveTool.exe scan >> \"%~dp0reports\\scheduled_scan.log\" 2>&1\r\n", Encoding.ASCII);
+        File.WriteAllText(bat, "@echo off\r\ncd /d \"%~dp0\"\r\nmat.exe scan >> \"%~dp0reports\\scheduled_scan.log\" 2>&1\r\n", Encoding.ASCII);
         Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "reports"));
 
         var code = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"\\\"{bat}\\\"\" /SC WEEKLY /D {day} /ST {time} /RU SYSTEM /RL HIGHEST /F");
