@@ -131,7 +131,22 @@ static void NrbfRetention()
     Eq(1, offsets.Count, "один поток NRBF после своего заголовка");
     True(offsets[0] == FakeMacroscopConfig.WrapperHeader.Length, "поток найден за заголовком-обёрткой");
     var r = MacroscopConfig.Extract(g).ToDictionary(x => x.CameraId);
-    Eq(3, r.Count, "распознано камер (слои прореживания не считаются)");
+    Eq(4, r.Count, "распознано камер (слои прореживания не считаются)");
+    var rec = r["7a1c00000000400080000000000000c3"];
+    Eq("Приёмная", rec.Name, "камера в формате SecChannel");
+    Eq(14.0, rec.MaxDays ?? 0, "срок SecChannel");
+    var s = rec.Settings ?? throw new Exception("нет настроек записи");
+    Eq(true, s.ArchiveEnabled ?? false, "запись включена");
+    Eq(2, s.ArchiveMode ?? -1, "код режима записи (enum)");
+    Eq(1, s.ArchiveStream ?? -1, "код потока в архив");
+    Eq(3, s.StreamFormat ?? -1, "код кодека");
+    Eq(12.0, s.ArchiveFpsLimit ?? 0, "лимит fps архива");
+    Eq(true, s.ArchiveFpsLimitEnabled ?? false, "лимит fps включён");
+    Eq(true, s.ThinningEnabled ?? false, "прореживание: включён второй слой");
+    Eq(7, s.PostRecordSec ?? 0, "постзапись");
+    Eq(false, s.UsesCameraFps ?? true, "свой fps");
+    Eq(15.0, s.Fps ?? 0, "fps из Macroscop");
+    Eq("режим 2 · поток 1 · кодек 3 · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
     var heavy = r["7a1c0000000040008000000000000037"];
     Eq(90.0, heavy.MaxDays ?? 0, "макс. срок камеры с полями в самом объекте");
     Eq(90.0, heavy.MinDays ?? 0, "мин. срок");
@@ -156,7 +171,9 @@ static void NrbfDumpHidesSecrets()
         True(!dump.Contains(FakeMacroscopConfig.Secret), "пароль камеры не попал в дамп");
         True(!dump.Contains("192.168.1.10"), "адрес камеры не попал в дамп");
         True(dump.Contains("Склад 1"), "имя камеры есть в дампе");
-        True(dump.Contains("Распознано камер: 3"), "итог распознавания в дампе");
+        True(dump.Contains("Распознано камер: 4"), "итог распознавания в дампе");
+        True(dump.Contains("== Распределение кодов =="), "распределение кодов в дампе");
+        True(dump.Contains("режим: 2: 1 кам."), "код режима в распределении");
     }
     finally { Directory.Delete(dir, true); }
 }
@@ -177,7 +194,7 @@ static void RetentionFromBackups()
     var names = CameraNames.FromLogsDir(fx.Logs);
     Eq("5e7f0000-0000-4000-8000-000000000001", names.ServerId, "id сервера из лога");
     var ret = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
-    Eq(3, ret.ById.Count, "камер в копии");
+    Eq(4, ret.ById.Count, "камер в копии");
     Eq(new DateTime(2026, 10, 21, 12, 40, 56, 354), ret.BackupTimeLocal ?? default, "выбрана новейшая копия");
 
     var cfg = new ToolConfig { CameraRetentionDays = new(StringComparer.OrdinalIgnoreCase) { ["Офис центр"] = 7 } };
@@ -196,7 +213,7 @@ static void RetentionFromBackups()
     Directory.CreateDirectory(broken);
     System.IO.File.WriteAllBytes(Path.Combine(broken, "SingleServerConfig.CmnConf"), new byte[] { 1, 2, 3, 4, 5 });
     var fallback = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
-    Eq(3, fallback.ById.Count, "битая новейшая копия пропущена, взята предыдущая");
+    Eq(4, fallback.ById.Count, "битая новейшая копия пропущена, взята предыдущая");
     Eq(new DateTime(2026, 10, 21, 12, 40, 56, 354), fallback.BackupTimeLocal ?? default, "время предыдущей копии");
     True(fallback.Warnings.Count == 1 && fallback.Warnings[0].Contains("2026-10-22"), "предупреждение о пропущенной копии");
 
@@ -296,8 +313,29 @@ sealed class FakeArchive : IDisposable
 }
 [Serializable] sealed class FakeArchiveSettings { public double _archiveMinDeepnessInDays; public double _archiveMaxDeepnessInDays; public TimeSpan _pre = TimeSpan.FromSeconds(1); }
 [Serializable] sealed class FakeNestedChannel { public Guid Id { get; set; } public string Name { get; set; } = ""; public FakeArchiveSettings Archive { get; set; } = new(); }
+enum FakeArchiveModes { AlwaysOn = 0, ByCommand = 1, ByMotion = 2 }
+enum FakeStreamTypes { Main = 0, Alternative = 1 }
+enum FakeVideoStreamFormats { Mjpeg = 0, Mpeg4 = 1, H264 = 2, H265 = 3 }
+[Serializable] sealed class FakeThinningSettings { public FakeThinningLayer[] _layers = { new() { _layerEnabled = false }, new() { _layerEnabled = true } }; }
+/// <summary>Same member names as Alarus.Config.SecChannel in Macroscop 4.7 (see dump-config).</summary>
+[Serializable] sealed class FakeSecChannel
+{
+    public Guid id; public string name = ""; public string login = "admin"; public string password = FakeMacroscopConfig.Secret;
+    public FakeVideoStreamFormats streamFormat = FakeVideoStreamFormats.H265;
+    public bool archiveEnabled = true; public FakeArchiveModes archiveMode = FakeArchiveModes.ByMotion;
+    public int arcRecTemp = 12; public bool arcRecTempEnabled = true;
+    public TimeSpan archiveDepth = TimeSpan.FromHours(10);
+    public double _archiveMinDeepnessInDays = 14; public double _archiveMaxDeepnessInDays = 14;
+    public int arcPreMDRecTime = 6; public int arcPostMDRecTime = 7;
+    public FakeStreamTypes archiveStreamType = FakeStreamTypes.Alternative;
+    public bool isMotionDetectorEnabled = true; public bool isCamMDEnabled = false;
+    public bool isUsingCamFrameRateSetting = false; public int liveFrameRate = 15;
+    public bool isUsingCamResolutionSetting = true;
+    public FakeThinningSettings _archiveThinningSettings = new();
+}
 [Serializable] sealed class FakeServerConfig
 {
+    public Dictionary<Guid, FakeSecChannel> secChannels = new();
     public List<FakeChannelConfig> _channels = new();
     public Dictionary<Guid, FakeNestedChannel> _nested = new();
     public Dictionary<string, object> _misc = new() { ["port"] = 8080, ["ratio"] = 1.5m, ["when"] = new DateTime(2026, 10, 21), ["ch"] = 'Я', ["blob"] = new byte[] { 1, 2, 3 } };
@@ -316,6 +354,8 @@ static class FakeMacroscopConfig
         cfg._channels.Add(new FakeChannelConfig { _id = Guid.Parse("7a1c0000-0000-4000-8000-0000000000a1"), _name = "Офис центр", _archiveMinDeepnessInDays = officeDays, _archiveMaxDeepnessInDays = officeDays });
         var nid = Guid.Parse("01234567-89ab-cdef-0123-456789abcdef");
         cfg._nested[nid] = new FakeNestedChannel { Id = nid, Name = "Вложенная", Archive = new FakeArchiveSettings { _archiveMinDeepnessInDays = 30, _archiveMaxDeepnessInDays = 60 } };
+        var rid = Guid.Parse("7a1c0000-0000-4000-8000-0000000000c3");
+        cfg.secChannels[rid] = new FakeSecChannel { id = rid, name = "Приёмная" };
 
         using var ms = new MemoryStream();
         ms.Write(WrapperHeader);

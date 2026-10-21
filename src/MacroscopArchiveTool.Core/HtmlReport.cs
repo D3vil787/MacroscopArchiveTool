@@ -109,7 +109,7 @@ public static class HtmlReport
           .Append(Th("Камера"));
         if (multi) sb.Append(Th("Сервер"));
         sb.Append(Th("В сутки", true)).Append(Th("Ср. поток", true)).Append(Th(multi ? "Доля на сервере" : "Доля", true))
-          .Append(Th("Объём", true)).Append(Th("Глубина", true)).Append(Th("Срок", true))
+          .Append(Th("Объём", true)).Append(Th("Глубина", true)).Append(Th("Срок", true)).Append(Th("Запись"))
           .Append(Th("Самая старая", true)).Append(Th("Дисков", true)).Append(Th("Отметки"))
           .Append("</tr></thead><tbody>");
 
@@ -128,6 +128,7 @@ public static class HtmlReport
               .Append(TdN(Bytes(c.Bytes), c.Bytes))
               .Append(TdN(c.DepthDays.ToString("0", Ru) + " дн.", c.DepthDays, c.ExceedsRetention ? "bad" : null))
               .Append(RetentionCell(c))
+              .Append(c.Settings != null ? Td(SettingNames.Summary(c.Settings), cls: "small", title: SettingNames.Details(c.Settings)) : Td("—", cls: "muted"))
               .Append(TdDate(c.OldestUtc))
               .Append(TdN(c.BytesByDrive.Count > 0 ? c.BytesByDrive.Count.ToString(Ru) : "—", c.BytesByDrive.Count))
               .Append("<td>").Append(string.Join(" ", flags)).Append("</td></tr>");
@@ -141,6 +142,7 @@ public static class HtmlReport
         "<li><b>Глубина</b> — сколько дней назад сделана самая старая запись камеры. Перерывы в записи не учитываются.</li>" +
         "<li><b>Тяжёлая</b> — камера пишет в сутки в heavyFactor раз больше медианной камеры своего сервера (по умолчанию 2,5; задаётся в mat.json).</li>" +
         "<li><b>Срок</b> — время хранения камеры из конфигурации Macroscop (если мин и макс различаются — «мин–макс»). Звёздочка — срок взят из mat.json. Наведите курсор, чтобы увидеть источник.</li>" +
+        "<li><b>Запись</b> — настройки камеры из конфигурации Macroscop: режим записи, поток, кодек, ограничение fps архива, прореживание. Наведите курсор, чтобы увидеть детекторы движения, пред- и постзапись, fps и разрешение.</li>" +
         "<li><b>Сверх срока</b> — самая старая запись старше максимального срока хранения камеры больше чем на сутки.</li>" +
         "<li><b>Вне архива</b> — место на томе, занятое не папкой MacroscopArchive. Большие значения часто означают забытые данные.</li>" +
         "<li><b>До заполнения</b> — грубая оценка по свободному месту дисков, куда шла запись за сутки. Лимиты Macroscop «Мин. своб. место» и «Макс. размер архива» не учитываются.</li>" +
@@ -221,7 +223,7 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 .bar{display:inline-block;width:70px;height:7px;background:var(--bar);border-radius:4px;margin-right:6px;vertical-align:middle;overflow:hidden}.bar.small{width:50px}
 .bar span{display:block;height:100%;background:var(--accent)}.bar span.full{background:var(--bad)}.warning{color:var(--warn);margin:6px 0}
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
-.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
+td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
 @media print{section{break-inside:avoid}#filter{display:none}}
 """;
 

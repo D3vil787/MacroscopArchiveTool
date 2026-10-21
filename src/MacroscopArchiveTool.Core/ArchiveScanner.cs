@@ -114,6 +114,7 @@ public sealed class ArchiveScanner
         var explicitDays = config.ExplicitRetention(c.Id, c.Name);
         var mc = macroscop?.ById.GetValueOrDefault(c.Id);
         c.RetentionMinDays = mc?.MinDays;
+        c.Settings = mc?.Settings;
         if (explicitDays.HasValue) { c.RetentionDays = explicitDays; c.RetentionSource = "mat.json"; }
         else if (mc != null && (mc.MaxDays ?? mc.MinDays) is double d && d > 0)
         {

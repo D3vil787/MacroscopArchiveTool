@@ -66,6 +66,8 @@ public sealed class CameraStat
     public double? RetentionMinDays { get; set; }
     /// <summary>"macroscop", "mat.json" or "default".</summary>
     public string RetentionSource { get; set; } = "";
+    /// <summary>Recording settings from the Macroscop configuration, when available.</summary>
+    public CameraSettings? Settings { get; set; }
 
     // Derived values, filled by ReportAnalyzer.
     public double DepthDays { get; set; }
