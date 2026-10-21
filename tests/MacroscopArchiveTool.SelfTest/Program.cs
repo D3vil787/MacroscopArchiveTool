@@ -12,6 +12,12 @@ var tests = new List<(string Name, Action Body)>
     ("NRBF: сроки камер из бинарной конфигурации", NrbfRetention),
     ("NRBF: дамп структуры без паролей", NrbfDumpHidesSecrets),
     ("Сроки из ConfigsBackups: новейшая копия, приоритет mat.json", RetentionFromBackups),
+    ("Перенос: полная копия, время файлов, манифест, повторный запуск", CopyFullAndRerun),
+    ("Перенос: зеркалирование изменений и удалений", CopyMirror),
+    ("Перенос: ошибки чтения, повторы, потери с камерой", CopyLossesAndRetries),
+    ("Перенос: файл удалён Macroscop во время копирования — не потеря", CopyVanished),
+    ("Перенос: база событий исключается и потом копируется заново", CopyExcludeForceDb),
+    ("Перенос: ограничение скорости, отмена и продолжение", CopyThrottleCancelResume),
 };
 
 int failed = 0;
@@ -231,6 +237,196 @@ static void RetentionFromBackups()
     var bad = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
     Eq(0, bad.ById.Count, "только битая копия — сроков нет");
     True(bad.Warnings.Count == 1 && bad.Warnings[0].Contains("mat.json"), "предупреждение и откат на mat.json");
+}
+
+static (string Src, string Dst, string Root) CopyFixture()
+{
+    var root = Path.Combine(Path.GetTempPath(), "mat-copy-" + Guid.NewGuid().ToString("N"));
+    var src = Path.Combine(root, "J", "MacroscopArchive");
+    var dst = Path.Combine(root, "R", "MacroscopArchive");
+    var rnd = new Random(42);
+    void Put(string rel, int size, int daysAgo)
+    {
+        var p = Path.Combine(src, rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+        var b = new byte[size]; rnd.NextBytes(b);
+        System.IO.File.WriteAllBytes(p, b);
+        System.IO.File.SetLastWriteTimeUtc(p, DateTime.UtcNow.AddDays(-daysAgo).AddSeconds(rnd.Next(1000)));
+    }
+    Put("ArchiveLogicDrive.xml", 958, 1);
+    Put(Path.Combine("media", "0d5c0000000040008000000000000001.dsc"), 2000, 1);
+    Put(Path.Combine("media", "7a1c0000000040008000000000000037", "1", "1", "aaa", "blob0"), 3_000_000, 60);
+    Put(Path.Combine("media", "7a1c0000000040008000000000000037", "1", "1", "aaa.fidx"), 85, 60);
+    Put(Path.Combine("media", "7a1c00000000400080000000000000a1", "1", "1", "bbb", "blob0"), 2_500_000, 30);
+    Put(Path.Combine("media", "7a1c00000000400080000000000000a1", "1", "1", "bbb", "empty"), 0, 30);
+    Put(Path.Combine("db", "PG_16_202307071", "22462", "1249"), 8192, 1);
+    Directory.CreateDirectory(Path.Combine(src, "ConfigsBackups", "empty-dir"));
+    return (src, dst, root);
+}
+
+static void AssertSameTree(string a, string b)
+{
+    var fa = Directory.GetFiles(a, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(a, p)).OrderBy(x => x).ToList();
+    var fb = Directory.GetFiles(b, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(b, p)).OrderBy(x => x).ToList();
+    Eq(string.Join("|", fa), string.Join("|", fb), "одинаковый список файлов");
+    foreach (var rel in fa)
+    {
+        var x = Path.Combine(a, rel); var y = Path.Combine(b, rel);
+        True(System.IO.File.ReadAllBytes(x).AsSpan().SequenceEqual(System.IO.File.ReadAllBytes(y)), "одинаковое содержимое " + rel);
+        Eq(System.IO.File.GetLastWriteTimeUtc(x), System.IO.File.GetLastWriteTimeUtc(y), "время изменения " + rel);
+    }
+    var da = Directory.GetDirectories(a, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(a, p)).OrderBy(x => x);
+    var db = Directory.GetDirectories(b, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(b, p)).OrderBy(x => x);
+    Eq(string.Join("|", da), string.Join("|", db), "одинаковые папки (включая пустые)");
+}
+
+static void CopyFullAndRerun()
+{
+    var (src, dst, root) = CopyFixture();
+    try
+    {
+        var progress = new List<MacroscopArchiveTool.Core.Migration.CopyProgress>();
+        var r = new MacroscopArchiveTool.Core.Migration.ArchiveCopier().Run(src, dst, new() { RetryDelay = TimeSpan.Zero },
+            new SyncProgress<MacroscopArchiveTool.Core.Migration.CopyProgress>(progress.Add));
+        Eq(7, r.FilesCopied, "скопировано файлов");
+        Eq(0, r.Losses.Count, "без потерь");
+        AssertSameTree(src, dst);
+        True(System.IO.File.Exists(MacroscopArchiveTool.Core.Migration.ArchiveCopier.ManifestPath(dst)), "манифест рядом с архивом, вне MacroscopArchive");
+        True(!Directory.Exists(Path.Combine(dst, MacroscopArchiveTool.Core.Migration.ArchiveCopier.ManifestFolder)), "манифест не внутри MacroscopArchive");
+        Eq("Готово", progress.Last().Phase, "последний статус");
+        Eq(100.0, progress.Last().Percent, "100%");
+
+        var again = new MacroscopArchiveTool.Core.Migration.ArchiveCopier().Run(src, dst, new());
+        Eq(0, again.FilesCopied, "повторный запуск ничего не копирует");
+        Eq(7, again.FilesSkipped, "всё пропущено как актуальное");
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static void CopyMirror()
+{
+    var (src, dst, root) = CopyFixture();
+    try
+    {
+        var copier = new MacroscopArchiveTool.Core.Migration.ArchiveCopier();
+        copier.Run(src, dst, new());
+        var changed = Path.Combine(src, "media", "0d5c0000000040008000000000000001.dsc");
+        System.IO.File.WriteAllText(changed, "новое содержимое");
+        System.IO.File.SetLastWriteTimeUtc(changed, DateTime.UtcNow);
+        System.IO.File.Delete(Path.Combine(src, "media", "7a1c0000000040008000000000000037", "1", "1", "aaa", "blob0"));
+        Directory.Delete(Path.Combine(src, "media", "7a1c0000000040008000000000000037", "1", "1", "aaa"));
+        var added = Path.Combine(src, "media", "7a1c00000000400080000000000000a1", "1", "1", "ccc", "blob0");
+        Directory.CreateDirectory(Path.GetDirectoryName(added)!);
+        System.IO.File.WriteAllBytes(added, new byte[123_456]);
+        var r = copier.Run(src, dst, new());
+        Eq(2, r.FilesCopied, "скопированы изменённый и новый");
+        Eq(1, r.FilesDeleted, "удалён файл, которого нет в источнике");
+        AssertSameTree(src, dst);
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static void CopyLossesAndRetries()
+{
+    var (src, dst, root) = CopyFixture();
+    try
+    {
+        var bad = Path.Combine(src, "media", "7a1c0000000040008000000000000037", "1", "1", "aaa", "blob0");
+        int attempts = 0;
+        var copier = new MacroscopArchiveTool.Core.Migration.ArchiveCopier
+        {
+            OpenSourceOverride = p => p == bad ? (++attempts > 0 ? throw new IOException("Ошибка CRC (имитация)") : null!) : null!,
+        };
+        var r = copier.Run(src, dst, new() { Retries = 2, RetryDelay = TimeSpan.Zero });
+        Eq(3, attempts, "1 попытка + 2 повтора");
+        Eq(1, r.Losses.Count, "одна потеря");
+        Eq("7a1c0000000040008000000000000037", r.Losses[0].CameraId, "камера потерянного файла");
+        True(r.Losses[0].Error.Contains("CRC"), "текст ошибки сохранён");
+        Eq(6, r.FilesCopied, "остальные файлы скопированы");
+        True(!System.IO.File.Exists(Path.Combine(dst, Path.GetRelativePath(src, bad)) + MacroscopArchiveTool.Core.Migration.ArchiveCopier.PartialSuffix), "нет недокопированного файла");
+
+        attempts = -100;   // disk "recovered": the next pass picks the file up
+        copier.OpenSourceOverride = null;
+        var r2 = copier.Run(src, dst, new());
+        Eq(1, r2.FilesCopied, "при повторном запуске потерянный файл докопирован");
+        AssertSameTree(src, dst);
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static void CopyVanished()
+{
+    var (src, dst, root) = CopyFixture();
+    try
+    {
+        var gone = Path.Combine(src, "media", "7a1c00000000400080000000000000a1", "1", "1", "bbb", "blob0");
+        var copier = new MacroscopArchiveTool.Core.Migration.ArchiveCopier
+        {
+            OpenSourceOverride = p => { if (p == gone) { System.IO.File.Delete(p); throw new FileNotFoundException("нет файла", p); } return null!; },
+        };
+        var r = copier.Run(src, dst, new());
+        Eq(1, r.FilesVanished, "файл удалён ретеншном во время копирования");
+        Eq(0, r.Losses.Count, "это не потеря");
+        True(!System.IO.File.Exists(Path.Combine(dst, Path.GetRelativePath(src, gone))), "в копии его тоже нет");
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static void CopyExcludeForceDb()
+{
+    var (src, dst, root) = CopyFixture();
+    try
+    {
+        var copier = new MacroscopArchiveTool.Core.Migration.ArchiveCopier();
+        var live = copier.Run(src, dst, new() { ExcludePrefixes = { "db" } });
+        Eq(6, live.FilesCopied, "живой проход без db");
+        True(!Directory.Exists(Path.Combine(dst, "db")), "db не тронута");
+
+        var final1 = copier.Run(src, dst, new() { ForcePrefixes = { "db" } });
+        Eq(1, final1.FilesCopied, "финальный проход копирует db");
+        var final2 = copier.Run(src, dst, new() { ForcePrefixes = { "db" } });
+        Eq(1, final2.FilesCopied, "db копируется заново даже без изменений");
+        Eq(6, final2.FilesSkipped, "остальное пропущено");
+
+        var pre = Path.Combine(dst, "db", "stale-file");
+        System.IO.File.WriteAllText(pre, "x");
+        var excl = copier.Run(src, dst, new() { ExcludePrefixes = { "db" } });
+        True(System.IO.File.Exists(pre), "исключённая папка не зеркалируется (ничего не удаляется)");
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+static void CopyThrottleCancelResume()
+{
+    var (src, dst, root) = CopyFixture();
+    try
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var r = new MacroscopArchiveTool.Core.Migration.ArchiveCopier().Run(src, dst, new() { SpeedLimitBytesPerSec = 10_000_000, BufferSize = 256 * 1024 });
+        True(sw.Elapsed.TotalSeconds >= 0.35, $"ограничение скорости соблюдено ({sw.Elapsed.TotalSeconds:0.00} с на ~5,5 МБ при 10 МБ/с)");
+        Directory.Delete(Path.GetDirectoryName(dst)!, true);
+
+        using var cts = new CancellationTokenSource();
+        int reports = 0;
+        var cancelled = new MacroscopArchiveTool.Core.Migration.ArchiveCopier().Run(src, dst, new() { BufferSize = 64 * 1024, SpeedLimitBytesPerSec = 20_000_000 },
+            new SyncProgress<MacroscopArchiveTool.Core.Migration.CopyProgress>(p => { if (p.Phase == "Копирование" && ++reports == 1) cts.Cancel(); }), cts.Token);
+        True(cancelled.Cancelled, "копирование остановлено");
+        True(cancelled.FilesCopied < 7, "скопировано не всё");
+        True(!Directory.GetFiles(dst, "*" + MacroscopArchiveTool.Core.Migration.ArchiveCopier.PartialSuffix, SearchOption.AllDirectories).Any(), "нет недокопированных файлов");
+
+        var resumed = new MacroscopArchiveTool.Core.Migration.ArchiveCopier().Run(src, dst, new());
+        True(!resumed.Cancelled && resumed.FilesSkipped == cancelled.FilesCopied, "продолжение пропускает уже скопированное");
+        AssertSameTree(src, dst);
+    }
+    finally { Directory.Delete(root, true); }
+}
+
+/// <summary>IProgress that runs the callback synchronously (Progress&lt;T&gt; posts to the thread pool).</summary>
+sealed class SyncProgress<T> : IProgress<T>
+{
+    private readonly Action<T> _a;
+    public SyncProgress(Action<T> a) => _a = a;
+    public void Report(T value) => _a(value);
 }
 
 partial class Program
