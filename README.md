@@ -70,4 +70,4 @@ dotnet run -c Release --project tests/MacroscopArchiveTool.SelfTest        # с�
 dotnet publish src/MacroscopArchiveTool.Cli -c Release -r win-x64 -o publish # один exe без установки .NET
 ```
 
-Тег `vX.Y.Z` → GitHub Actions соберёт и опубликует релиз с zip-архивом.
+Новая версия в `Directory.Build.props` + push в `main` → GitHub Actions соберёт и опубликует релиз `vX.Y.Z` с zip-архивом.

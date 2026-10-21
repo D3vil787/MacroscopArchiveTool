@@ -36,8 +36,17 @@ jobs:
           name: MacroscopArchiveTool-win-x64
           path: publish/
 
-      - name: GitHub Release (tags v* only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Release on version bump: when Directory.Build.props carries a version that has no release yet,
+      # the push to main publishes vX.Y.Z with the zip. Re-runs and other commits are no-ops.
+      - name: GitHub Release (new version on main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create ${{ github.ref_name }} MacroscopArchiveTool-win-x64.zip --title ${{ github.ref_name }} --generate-notes
+        run: |
+          $ver = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          $tag = "v$ver"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Host "Release $tag already exists - skipping"; exit 0 }
+          gh release create $tag MacroscopArchiveTool-win-x64.zip --target $env:GITHUB_SHA --title $tag --generate-notes
+          Write-Host "Published $tag"
