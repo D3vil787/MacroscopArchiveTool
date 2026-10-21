@@ -18,6 +18,9 @@ var tests = new List<(string Name, Action Body)>
     ("Перенос: файл удалён Macroscop во время копирования — не потеря", CopyVanished),
     ("Перенос: база событий исключается и потом копируется заново", CopyExcludeForceDb),
     ("Перенос: ограничение скорости, отмена и продолжение", CopyThrottleCancelResume),
+    ("Вывод диска: полный сценарий на VHDX", RetireHappyPath),
+    ("Вывод диска: сбой переключения — буквы возвращаются, повтор и откат", RetireSwitchFailureRollsBack),
+    ("Вывод диска: проверки и отмена ожидания Macroscop", RetirePrecheckAndCancel),
 };
 
 int failed = 0;
