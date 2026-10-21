@@ -324,7 +324,8 @@ internal sealed class RetireWizard : Form
         var status = Ui.Text("", null, Ui.Muted, W);
         var bar = new ProgressBar { Style = ProgressBarStyle.Marquee, Width = W, Height = 14, MarqueeAnimationSpeed = 30 };
         var results = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = new Padding(0, 8, 0, 8) };
-        var again = Ui.Button("Проверить снова", async (_, _) => await RunChecks(false));
+        Button again = null!;
+        again = Ui.Button("Проверить снова", async (_, _) => await RunChecks(false));
         s.Controls.Add(status);
         s.Controls.Add(bar);
         s.Controls.Add(results);
