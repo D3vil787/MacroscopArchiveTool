@@ -170,18 +170,31 @@ internal sealed class RetireWizard : Form
 
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_switching) { e.Cancel = true; Ui.Info(this, "Дождитесь окончания переключения."); return; }
-        if (_busy)
+        if (_switching && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Ui.Info(this, "Дождитесь окончания переключения."); return; }
+        if (_busy && e.CloseReason == CloseReason.UserClosing)
         {
+            // Long work goes on in the background; the start screen shows its progress and reopens this window.
             e.Cancel = true;
-            if (Ui.Confirm(this, "Остановить копирование? Его можно продолжить позже с того же места: откройте этот вывод диска на главном экране."))
-            {
-                _pause.Set();
-                _cts?.Cancel();
-            }
+            Hide();
             return;
         }
+        if (_busy) StopWork();
         DiscardUnstartedPlan();
+    }
+
+    /// <summary>Retirement this window works on (null until the plan is made).</summary>
+    public string? JobId => _state?.Id;
+    /// <summary>Copy, checks or switch-over running right now.</summary>
+    public bool IsWorking => _busy || _switching;
+    public bool IsSwitching => _switching;
+    /// <summary>One line for the start screen: what is happening now.</summary>
+    public string LiveStatus { get; private set; } = "";
+
+    /// <summary>Stops copying at the next file boundary; it resumes from there next time.</summary>
+    public void StopWork()
+    {
+        _pause.Set();
+        _cts?.Cancel();
     }
 
     /// <summary>A plan that changed nothing on disk is not worth keeping in the list.</summary>
@@ -395,7 +408,7 @@ internal sealed class RetireWizard : Form
         start = Ui.Button(st.Stage == RetireStage.Copied ? "Докопировать изменения" : "Начать копирование", async (_, _) => await RunCopy());
         pause = Ui.Button("Пауза", (_, _) =>
         {
-            if (_pause.IsSet) { _pause.Reset(); pause.Text = "Продолжить"; phase.Text = "Пауза"; }
+            if (_pause.IsSet) { _pause.Reset(); pause.Text = "Продолжить"; phase.Text = "Пауза"; LiveStatus = "Пауза"; }
             else { _pause.Set(); pause.Text = "Пауза"; }
         });
         stop = Ui.Button("Остановить", (_, _) => { _pause.Set(); _cts?.Cancel(); });
@@ -425,6 +438,9 @@ internal sealed class RetireWizard : Form
 
         void OnProgress(CopyProgress p)
         {
+            LiveStatus = _pause.IsSet
+                ? $"Копирование {p.Percent:0.0}%" + (p.Eta is TimeSpan left ? $", осталось ≈ {Ui.Duration(left)}" : "")
+                : $"Пауза ({p.Percent:0.0}%)";
             if (!_pause.IsSet) return;
             phase.Text = p.Phase; phase.ForeColor = SystemColors.ControlText;
             bar.Value = (int)Math.Clamp(p.Percent * 10, 0, 1000);
@@ -456,7 +472,7 @@ internal sealed class RetireWizard : Form
             catch (Exception ex) { phase.Text = "Ошибка: " + ex.Message; phase.ForeColor = Ui.Bad; AppendLog("ОШИБКА: " + ex.Message); }
             finally
             {
-                _busy = false; _cts.Dispose(); _cts = null;
+                _busy = false; _cts.Dispose(); _cts = null; LiveStatus = "";
                 pause.Enabled = stop.Enabled = false;
                 start.Enabled = true;
                 start.Text = st.Stage == RetireStage.Copied ? "Докопировать изменения" : "Продолжить копирование";

@@ -23,7 +23,7 @@ public static class HtmlReport
           .Append("</p></header>");
 
         if (reports.Count > 1) RenderOverall(sb, reports);
-        foreach (var r in reports) RenderServer(sb, r, reports.Count > 1);
+        for (int i = 0; i < reports.Count; i++) RenderServer(sb, reports[i], reports.Count > 1, i);
         RenderCameras(sb, reports);
         RenderNotes(sb);
 
@@ -43,7 +43,7 @@ public static class HtmlReport
         sb.Append("</div></section>");
     }
 
-    private static void RenderServer(StringBuilder sb, ScanReport r, bool multi)
+    private static void RenderServer(StringBuilder sb, ScanReport r, bool multi, int index)
     {
         var rate = ReportAnalyzer.DailyRate(r);
         var headroom = ReportAnalyzer.HeadroomDays(r);
@@ -69,7 +69,10 @@ public static class HtmlReport
             sb.Append("<p class=\"muted\">Сроки хранения: ").Append(H(r.RetentionSource)).Append("</p>");
         foreach (var w in r.Warnings) sb.Append("<p class=\"warning\">⚠ ").Append(H(w)).Append("</p>");
 
-        sb.Append("<h3>Диски</h3><div class=\"scroll\"><table class=\"sortable\"><thead><tr>")
+        bool hasDays = r.Drives.Any(d => d.DayCameraBytes.Count > 0);
+        sb.Append("<h3>Диски</h3>");
+        if (hasDays) sb.Append("<p class=\"muted\">Щёлкните строку диска, чтобы увидеть объём по дням, а затем день — чтобы увидеть камеры.</p>");
+        sb.Append("<div class=\"scroll\"><table class=\"sortable drives\" data-s=\"").Append(index).Append("\"><thead><tr>")
           .Append(Th("Диск")).Append(Th("Метка")).Append(Th("Размер", true)).Append(Th("Свободно", true))
           .Append(Th("Заполнение", true)).Append(Th("Видео", true)).Append(Th("БД", true)).Append(Th("Прочее в архиве", true))
           .Append(Th("Вне архива", true)).Append(Th("Камер", true)).Append(Th("Самая старая", true)).Append(Th("Последняя запись", true))
@@ -78,8 +81,8 @@ public static class HtmlReport
         {
             var known = d.TotalBytes > 0;
             var pct = known ? (double)d.UsedBytes / d.TotalBytes * 100 : 0;
-            sb.Append("<tr>")
-              .Append(Td(d.Name, cls: "strong")).Append(Td(d.VolumeLabel))
+            sb.Append(d.DayCameraBytes.Count > 0 ? $"<tr class=\"drv\" tabindex=\"0\" data-d=\"{H(d.Name)}\">" : "<tr>")
+              .Append(Td((d.DayCameraBytes.Count > 0 ? "▸ " : "") + d.Name, cls: "strong")).Append(Td(d.VolumeLabel))
               .Append(TdN(known ? Bytes(d.TotalBytes) : "—", d.TotalBytes)).Append(TdN(known ? Bytes(d.FreeBytes) : "—", d.FreeBytes));
             if (known)
                 sb.Append("<td class=\"num\" data-v=\"").Append(Inv(pct)).Append("\"><div class=\"bar\"><span style=\"width:")
@@ -97,7 +100,35 @@ public static class HtmlReport
                       : Td("без записи > 24 ч", cls: "muted"))
               .Append("</tr>");
         }
-        sb.Append("</tbody></table></div></section>");
+        sb.Append("</tbody></table></div>");
+        if (hasDays) AppendDayData(sb, r, index);
+        sb.Append("</section>");
+    }
+
+    /// <summary>
+    /// Compact JSON for the drill-down: camera names once, then per drive [[day, total, [[camIndex, bytes], …]], …], newest day first.
+    /// </summary>
+    private static void AppendDayData(StringBuilder sb, ScanReport r, int index)
+    {
+        var names = r.Cameras.ToDictionary(c => c.Id, c => c.Name, StringComparer.OrdinalIgnoreCase);
+        var camIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var camList = new List<string>();
+        int Cam(string id)
+        {
+            if (!camIndex.TryGetValue(id, out var i)) { i = camList.Count; camIndex[id] = i; camList.Add(names.GetValueOrDefault(id) ?? CameraNames.ToDashedGuid(id) ?? id); }
+            return i;
+        }
+        var drives = new Dictionary<string, object>();
+        foreach (var d in r.Drives.Where(d => d.DayCameraBytes.Count > 0))
+            drives[d.Name] = d.DayCameraBytes.OrderByDescending(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => new object[]
+                {
+                    kv.Key, kv.Value.Values.Sum(),
+                    kv.Value.OrderByDescending(c => c.Value).Select(c => new long[] { Cam(c.Key), c.Value }).ToArray(),
+                }).ToArray();
+        var json = System.Text.Json.JsonSerializer.Serialize(new { cams = camList, drives });
+        sb.Append("<script type=\"application/json\" id=\"days-").Append(index).Append("\">")
+          .Append(json.Replace("</", "<\\/")).Append("</script>");
     }
 
     private static void RenderCameras(StringBuilder sb, IReadOnlyList<ScanReport> reports)
@@ -224,6 +255,11 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 .bar span{display:block;height:100%;background:var(--accent)}.bar span.full{background:var(--bad)}.warning{color:var(--warn);margin:6px 0}
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
 td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
+tr.drv{cursor:pointer}tr.drv:hover,tr.drv.open{background:var(--bg)}tr.drv:focus{outline:2px solid var(--accent);outline-offset:-2px}
+tr.detail>td{padding:4px 10px 14px 28px;background:var(--bg);white-space:normal}
+table.days,table.dcams{width:auto;min-width:520px}table.days td,table.dcams td{padding:4px 10px}table.days th{cursor:default}
+tr.day{cursor:pointer}tr.day:hover,tr.day.open{background:var(--panel)}tr.camrow>td{padding:2px 0 10px 24px}
+.bar.wide{width:220px}.bar.mid{width:140px}
 @media print{section{break-inside:avoid}#filter{display:none}}
 """;
 
@@ -234,7 +270,10 @@ document.querySelectorAll('table.sortable').forEach(function(t){
       var asc=!th.classList.contains('asc');
       t.querySelectorAll('th').forEach(function(x){x.classList.remove('asc','desc')});
       th.classList.add(asc?'asc':'desc');
-      var b=t.tBodies[0],rows=Array.from(b.rows);
+      var b=t.tBodies[0];
+      [].forEach.call(b.querySelectorAll('tr.detail'),function(r){r.parentNode.removeChild(r)});
+      [].forEach.call(b.querySelectorAll('tr.drv.open'),function(r){r.classList.remove('open');arrow(r,false)});
+      var rows=[].slice.call(b.rows);
       rows.sort(function(a,c){
         var x=a.cells[i],y=c.cells[i];
         var vx=x.dataset.v!==undefined?parseFloat(x.dataset.v):x.textContent.toLowerCase();
@@ -246,6 +285,44 @@ document.querySelectorAll('table.sortable').forEach(function(t){
     th.addEventListener('click',sort);
     th.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();sort();}});
   });
+});
+function arrow(tr,open){var c=tr.cells[0];c.textContent=(open?'▾ ':'▸ ')+c.textContent.replace(/^[▸▾] /,'');}
+function fmt(b){var u=['Б','КБ','МБ','ГБ','ТБ'],i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return (b>=100||i===0?Math.round(b)+'':b.toFixed(1).replace('.',','))+' '+u[i];}
+var dows=['вс','пн','вт','ср','чт','пт','сб'];
+function dayLabel(s){var p=s.split('-'),d=new Date(+p[0],p[1]-1,+p[2]);return p[2]+'.'+p[1]+'.'+p[0]+', '+dows[d.getDay()];}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]});}
+function pct(v,max){return max>0?Math.max(1,Math.round(v/max*100)):0;}
+document.querySelectorAll('table.drives').forEach(function(t){
+  var el=document.getElementById('days-'+t.dataset.s);if(!el)return;
+  var data=JSON.parse(el.textContent),cols=t.tHead.rows[0].cells.length;
+  function toggleDrive(tr){
+    var next=tr.nextElementSibling;
+    if(next&&next.classList.contains('detail')){next.parentNode.removeChild(next);tr.classList.remove('open');arrow(tr,false);return;}
+    var days=data.drives[tr.dataset.d]||[],max=0,total=0;
+    days.forEach(function(d){if(d[1]>max)max=d[1];total+=d[1];});
+    var h='<p class="muted">'+days.length+' дн., в среднем '+fmt(days.length?total/days.length:0)+' в сутки. Щёлкните день, чтобы увидеть камеры.</p>'+
+      '<table class="days"><thead><tr><th>День</th><th class="num">Объём</th><th class="num">Камер</th></tr></thead><tbody>';
+    days.forEach(function(d,i){h+='<tr class="day" tabindex="0" data-i="'+i+'"><td>▸ '+dayLabel(d[0])+'</td><td class="num"><div class="bar wide"><span style="width:'+pct(d[1],max)+'%"></span></div>'+fmt(d[1])+'</td><td class="num">'+d[2].length+'</td></tr>';});
+    h+='</tbody></table>';
+    var row=document.createElement('tr');row.className='detail';
+    row.innerHTML='<td colspan="'+cols+'">'+h+'</td>';
+    tr.parentNode.insertBefore(row,tr.nextSibling);tr.classList.add('open');arrow(tr,true);
+    var body=row.querySelector('table.days tbody');
+    function toggleDay(dr){
+      var n=dr.nextElementSibling;
+      if(n&&n.classList.contains('camrow')){n.parentNode.removeChild(n);dr.classList.remove('open');arrow(dr,false);return;}
+      var d=days[+dr.dataset.i],cmax=d[2].length?d[2][0][1]:0;
+      var c='<table class="dcams"><tbody>';
+      d[2].forEach(function(x){c+='<tr><td>'+esc(data.cams[x[0]])+'</td><td class="num"><div class="bar mid"><span style="width:'+pct(x[1],cmax)+'%"></span></div>'+fmt(x[1])+'</td><td class="num muted">'+(d[1]>0?(x[1]/d[1]*100).toFixed(1).replace('.',','):'0')+'%</td></tr>';});
+      c+='</tbody></table>';
+      var cr=document.createElement('tr');cr.className='camrow';cr.innerHTML='<td colspan="3">'+c+'</td>';
+      dr.parentNode.insertBefore(cr,dr.nextSibling);dr.classList.add('open');arrow(dr,true);
+    }
+    body.addEventListener('click',function(e){var dr=e.target.closest('tr.day');if(dr)toggleDay(dr);});
+    body.addEventListener('keydown',function(e){var dr=e.target.closest('tr.day');if(dr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggleDay(dr);}});
+  }
+  t.tBodies[0].addEventListener('click',function(e){if(e.target.closest('tr.detail'))return;var tr=e.target.closest('tr.drv');if(tr)toggleDrive(tr);});
+  t.tBodies[0].addEventListener('keydown',function(e){var tr=e.target.closest('tr.drv');if(tr&&e.target===tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();toggleDrive(tr);}});
 });
 var f=document.getElementById('filter');
 if(f){f.addEventListener('input',function(){var q=f.value.toLowerCase();

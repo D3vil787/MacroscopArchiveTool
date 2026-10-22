@@ -21,6 +21,7 @@ var tests = new List<(string Name, Action Body)>
     ("Вывод диска: полный сценарий на VHDX", RetireHappyPath),
     ("Вывод диска: сбой переключения — буквы возвращаются, повтор и откат", RetireSwitchFailureRollsBack),
     ("Вывод диска: проверки и отмена ожидания Macroscop", RetirePrecheckAndCancel),
+    ("Обновление: версия, ответ GitHub, проверка и замена файлов", UpdaterParseAndApply),
 };
 
 int failed = 0;
@@ -94,6 +95,11 @@ static void ScanFakeArchive()
     True(!d2.IsActive, "диск без записи за сутки неактивен");
 
     Near(100, r.Cameras.Sum(c => c.SharePercent), 0.001, "сумма долей = 100%");
+
+    // Drill-down: every video blob is counted once, under its day and camera.
+    long blobBytes = r.Drives.Sum(d => d.DayCameraBytes.Values.Sum(day => day.Values.Sum()));
+    Eq(r.Cameras.Sum(c => c.Bytes) - r.Cameras.Sum(c => c.Bytes % FakeArchive.Blob), blobBytes, "сумма по дням = объём блоков");
+    True(d1.DayCameraBytes.Values.Any(day => day.ContainsKey(heavy.Id)), "тяжёлая камера есть в разбивке по дням");
 }
 
 static void JsonAndHtml()
@@ -116,6 +122,9 @@ static void JsonAndHtml()
     True(html.Contains("Парковка 2 (бывшая парковка 2 .34)") || html.Contains("Склад 1"), "имена камер");
     True(!html.Contains("<script src"), "без внешних скриптов");
     True(HtmlReport.Render(new[] { r }).Contains("<h2>Сводка</h2>"), "одиночный отчёт");
+    True(html.Contains("id=\"days-0\"") && html.Contains("id=\"days-1\""), "данные по дням для каждого сервера");
+    True(html.Contains("class=\"drv\""), "строки дисков раскрываются");
+    if (Environment.GetEnvironmentVariable("MAT_HTML_OUT") is { Length: > 0 } outPath) File.WriteAllText(outPath, html, Encoding.UTF8);
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,12 @@ public sealed class DriveStat
     public int FragmentCount { get; set; }
     public int CameraCount { get; set; }
 
+    /// <summary>
+    /// Video blob bytes by recording day (server local date "yyyy-MM-dd") and camera id —
+    /// for the "drive → days → cameras" drill-down in the report.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, long>> DayCameraBytes { get; set; } = new();
+
     /// <summary>True when video was written to this drive during the last 24 hours.</summary>
     public bool IsActive { get; set; }
 

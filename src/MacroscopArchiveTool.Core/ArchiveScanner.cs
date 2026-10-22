@@ -165,7 +165,7 @@ public sealed class ArchiveScanner
                 foreach (var camDir in mediaDir.EnumerateDirectories("*", Flat))
                 {
                     ct.ThrowIfCancellationRequested();
-                    var cam = ScanCamera(camDir, drive.Name, ct);
+                    var cam = ScanCamera(camDir, drive.Name, drive.DayCameraBytes, ct);
                     if (cam.Bytes == 0 && cam.FragmentCount == 0) continue;
                     cams[cam.Id] = cam;
                     drive.MediaBytes += cam.Bytes;
@@ -184,7 +184,7 @@ public sealed class ArchiveScanner
         return (drive, cams, warnings);
     }
 
-    private CameraStat ScanCamera(DirectoryInfo camDir, string driveName, CancellationToken ct)
+    private CameraStat ScanCamera(DirectoryInfo camDir, string driveName, Dictionary<string, Dictionary<string, long>> days, CancellationToken ct)
     {
         var cam = new CameraStat { Id = CameraNames.Normalize(camDir.Name) };
         var fragmentDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -196,6 +196,9 @@ public sealed class ArchiveScanner
             if (f.Length >= BlobThresholdBytes)
             {
                 var t = f.LastWriteTimeUtc;
+                var day = t.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (!days.TryGetValue(day, out var perCam)) days[day] = perCam = new(StringComparer.OrdinalIgnoreCase);
+                perCam[cam.Id] = perCam.GetValueOrDefault(cam.Id) + f.Length;
                 cam.OldestUtc = Min(cam.OldestUtc, t);
                 cam.NewestUtc = Max(cam.NewestUtc, t);
                 fragmentDirs.Add(f.DirectoryName ?? "");

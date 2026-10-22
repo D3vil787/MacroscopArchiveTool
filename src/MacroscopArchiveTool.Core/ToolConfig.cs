@@ -27,6 +27,9 @@ public sealed class ToolConfig
     /// <summary>How many drives are scanned in parallel.</summary>
     public int ScanThreads { get; set; } = 4;
 
+    /// <summary>Look for a new version on GitHub when the window opens.</summary>
+    public bool CheckUpdates { get; set; } = true;
+
     public const string DefaultLogsDir = @"C:\ProgramData\Macroscop\Logs_Macroscop";
 
     public static readonly JsonSerializerOptions JsonOptions = new()
