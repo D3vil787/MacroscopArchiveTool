@@ -68,7 +68,11 @@ partial class Program
             older.Drives[0].MediaBytes = 10;
             ReportStore.SaveJson(older, Path.Combine(tmp, "macroscop_SRV1_old.json"));
             var hist = ReportHistory.Load(tmp, "SRV1");
-            R.Eq(1, hist.Count, "один прежний скан в истории");
+            R.Eq(1, hist.Count, "один прежний скан в истории (однократно прочитан из JSON)");
+            R.True(File.Exists(Path.Combine(tmp, ReportHistory.HistoryFile)), "история записана в history.jsonl");
+            File.Delete(Path.Combine(tmp, "macroscop_SRV1_old.json"));
+            ReportHistory.Append(tmp, report);
+            R.Eq(2, ReportHistory.Load(tmp, "SRV1").Count, "дальше история читается из history.jsonl, без тяжёлых отчётов");
             var html = HtmlReport.Render(new[] { report }, new Dictionary<string, List<HistoryPoint>> { ["SRV1"] = hist });
             R.True(html.Contains("Динамика") && html.Contains("<polyline"), "раздел динамики с графиком");
         }

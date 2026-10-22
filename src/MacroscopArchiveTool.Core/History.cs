@@ -13,25 +13,69 @@ public static class ReportHistory
         r.Cameras.Count > 0 ? r.Cameras.Max(c => c.DepthDays) : 0, ReportAnalyzer.ActiveFreeBytes(r), ReportAnalyzer.HeadroomDays(r),
         r.Cameras.Count, r.Cameras.Count(c => c.ExceedsRetention));
 
-    /// <summary>All scans of <paramref name="machineName"/> found in <paramref name="dir"/>, oldest first (one per hour at most).</summary>
+    public const string HistoryFile = "history.jsonl";
+    private const int BackfillFiles = 40;
+    private static readonly JsonSerializerOptions Json = new(ToolConfig.JsonOptions) { WriteIndented = false };
+
+    private sealed record Line(string MachineName, HistoryPoint Point);
+
+    /// <summary>Adds the key figures of a scan to reports\history.jsonl (one small line per scan).</summary>
+    public static void Append(string dir, ScanReport r)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, HistoryFile), JsonSerializer.Serialize(new Line(r.MachineName, Point(r)), Json) + "\n");
+        }
+        catch (Exception) { /* history is optional */ }
+    }
+
+    /// <summary>
+    /// Scans of <paramref name="machineName"/>, oldest first (one per hour at most), from reports\history.jsonl.
+    /// The first time a machine is not in that file, the newest JSON reports in the folder are read once and added to it.
+    /// </summary>
     public static List<HistoryPoint> Load(string dir, string machineName, int max = 200)
+    {
+        var points = ReadLines(dir).Where(l => string.Equals(l.MachineName, machineName, StringComparison.OrdinalIgnoreCase)).Select(l => l.Point).ToList();
+        if (points.Count == 0) points = Backfill(dir, machineName);
+        return points.GroupBy(p => new DateTime(p.ScannedAtUtc.Year, p.ScannedAtUtc.Month, p.ScannedAtUtc.Day, p.ScannedAtUtc.Hour, 0, 0))
+                     .Select(g => g.Last()).OrderBy(p => p.ScannedAtUtc).TakeLast(max).ToList();
+    }
+
+    private static IEnumerable<Line> ReadLines(string dir)
+    {
+        var f = Path.Combine(dir, HistoryFile);
+        if (!File.Exists(f)) yield break;
+        foreach (var text in File.ReadLines(f))
+        {
+            Line? l = null;
+            try { l = JsonSerializer.Deserialize<Line>(text, Json); } catch (Exception) { }
+            if (l != null) yield return l;
+        }
+    }
+
+    private static List<HistoryPoint> Backfill(string dir, string machineName)
     {
         var points = new List<HistoryPoint>();
         if (!Directory.Exists(dir)) return points;
-        foreach (var f in Directory.EnumerateFiles(dir, "macroscop_*.json").OrderByDescending(File.GetLastWriteTimeUtc).Take(max * 2))
+        foreach (var f in Directory.EnumerateFiles(dir, "macroscop_*.json").OrderByDescending(File.GetLastWriteTimeUtc).Take(BackfillFiles))
         {
             try
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(f));
-                if (!doc.RootElement.TryGetProperty("machineName", out var m) || !string.Equals(m.GetString(), machineName, StringComparison.OrdinalIgnoreCase)) continue;
                 var r = ReportStore.LoadJson(f);
+                if (!string.Equals(r.MachineName, machineName, StringComparison.OrdinalIgnoreCase)) continue;
                 ReportAnalyzer.Analyze(r, r.HeavyFactor > 0 ? r.HeavyFactor : 2.5);
                 points.Add(Point(r));
             }
             catch (Exception) { /* not a scan report */ }
         }
-        return points.GroupBy(p => new DateTime(p.ScannedAtUtc.Year, p.ScannedAtUtc.Month, p.ScannedAtUtc.Day, p.ScannedAtUtc.Hour, 0, 0))
-                     .Select(g => g.Last()).OrderBy(p => p.ScannedAtUtc).TakeLast(max).ToList();
+        try
+        {
+            if (points.Count > 0)
+                File.AppendAllLines(Path.Combine(dir, HistoryFile), points.OrderBy(p => p.ScannedAtUtc).Select(p => JsonSerializer.Serialize(new Line(machineName, p), Json)));
+        }
+        catch (Exception) { }
+        return points;
     }
 }
 

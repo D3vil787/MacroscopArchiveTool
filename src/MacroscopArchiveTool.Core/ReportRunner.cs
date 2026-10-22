@@ -24,19 +24,23 @@ public static class ReportRunner
                 ? $"Сроки хранения: {retention.ById.Count} камер из конфигурации Macroscop"
                 : "Сроки хранения: из mat.json (конфигурация Macroscop не прочитана)");
         }
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var report = new ArchiveScanner().Scan(list, names, config, progress, ct, retention);
+        progress?.Report($"Сканирование дисков: {report.ScanSeconds:0} с");
 
         Directory.CreateDirectory(outDir);
         var baseName = Path.Combine(outDir, ReportStore.BaseFileName(report));
+        var history = new Dictionary<string, List<HistoryPoint>> { [report.MachineName] = ReportHistory.Load(outDir, report.MachineName) };
         ReportStore.SaveJson(report, baseName + ".json");
+        ReportHistory.Append(outDir, report);
         try { MetricsWriter.Write(report); } catch (Exception ex) { progress?.Report("metrics.json не записан: " + ex.Message); }
         string? htmlPath = null;
         if (html)
         {
             htmlPath = baseName + ".html";
-            var history = new Dictionary<string, List<HistoryPoint>> { [report.MachineName] = ReportHistory.Load(outDir, report.MachineName) };
             File.WriteAllText(htmlPath, HtmlReport.Render(new[] { report }, history), new UTF8Encoding(true));
         }
+        progress?.Report($"Всего: {sw.Elapsed.TotalSeconds:0} с");
         return new Result(report, baseName + ".json", htmlPath);
     }
 }

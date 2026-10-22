@@ -65,7 +65,9 @@ internal static class Program
         var outDir = a.Get("--out") ?? Path.Combine(AppContext.BaseDirectory, "reports");
         Directory.CreateDirectory(outDir);
         var baseName = Path.Combine(outDir, ReportStore.BaseFileName(report));
+        var history = new Dictionary<string, List<HistoryPoint>> { [report.MachineName] = ReportHistory.Load(outDir, report.MachineName) };
         ReportStore.SaveJson(report, baseName + ".json");
+        ReportHistory.Append(outDir, report);
         try { MetricsWriter.Write(report); } catch (Exception ex) { Console.WriteLine("  ! metrics.json не записан: " + ex.Message); }
         Console.WriteLine();
         Console.WriteLine($"Готово за {report.ScanSeconds} с. Камер: {report.Cameras.Count}, дисков: {report.Drives.Count}.");
@@ -75,7 +77,6 @@ internal static class Program
 
         if (!a.Has("--no-html"))
         {
-            var history = new Dictionary<string, List<HistoryPoint>> { [report.MachineName] = ReportHistory.Load(outDir, report.MachineName) };
             File.WriteAllText(baseName + ".html", HtmlReport.Render(new[] { report }, history), new UTF8Encoding(true));
             Console.WriteLine($"HTML: {baseName}.html");
             if (a.Has("--open")) OpenFile(baseName + ".html");

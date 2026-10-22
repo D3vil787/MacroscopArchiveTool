@@ -78,7 +78,9 @@ internal sealed class ReportForm : Form
             {
                 using var host = new WindowsRemoteHost(server);
                 var r = new RemoteScanner().Run(host, p, ct);
+                ReportHistory.Load(ReportsDir, r.MachineName);   // one-time backfill from older JSON reports
                 ReportStore.SaveJson(r, Path.Combine(ReportsDir, ReportStore.BaseFileName(r) + ".json"));
+                ReportHistory.Append(ReportsDir, r);
                 return r;
             }));
         }
