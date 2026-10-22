@@ -22,6 +22,7 @@ var tests = new List<(string Name, Action Body)>
     ("Вывод диска: сбой переключения — буквы возвращаются, повтор и откат", RetireSwitchFailureRollsBack),
     ("Вывод диска: проверки и отмена ожидания Macroscop", RetirePrecheckAndCancel),
     ("Обновление: версия, ответ GitHub, проверка и замена файлов", UpdaterParseAndApply),
+    ("Удалённый скан: копирование, запуск, журнал, отчёт, уборка", RemoteScanRoundTrip),
 };
 
 int failed = 0;

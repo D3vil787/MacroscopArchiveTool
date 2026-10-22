@@ -43,8 +43,9 @@ internal sealed class MainForm : Form
         cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         cards.Controls.Add(Card("Отчёт по архиву",
-            "Объём и глубина архива по дискам и камерам, сроки хранения из настроек Macroscop, «тяжёлые» камеры. Только чтение.",
-            "Сделать отчёт", (_, _) => RunReport()), 0, 0);
+            "Объём и глубина архива по дискам, дням и камерам, сроки хранения из настроек Macroscop, «тяжёлые» камеры. " +
+            "Можно добавить другие серверы — получится сводный отчёт. Только чтение.",
+            "Сделать отчёт", (_, _) => RunReport(), ("Серверы…", (Action)(() => { using var f = new ServersForm(); f.ShowDialog(this); }))), 0, 0);
         cards.Controls.Add(Card("Вывести диск из эксплуатации",
             "Перенести архив с диска, который нужно убрать (например, с ошибками SMART), на другой том или в файл виртуального диска. " +
             "Записи остаются доступны, пока не истечёт срок хранения.",
@@ -96,7 +97,7 @@ internal sealed class MainForm : Form
         _idleTimer.Start();
     }
 
-    private static Control Card(string title, string text, string button, EventHandler onClick)
+    private static Control Card(string title, string text, string button, EventHandler onClick, (string Text, Action Click)? link = null)
     {
         var p = new FlowLayoutPanel
         {
@@ -106,8 +107,14 @@ internal sealed class MainForm : Form
         p.Controls.Add(Ui.Text(title, Ui.Subtitle, Ui.Accent));
         p.Controls.Add(Ui.Text(text, null, null, 360));
         var b = Ui.Button(button, onClick);
-        b.Margin = new Padding(0, 6, 0, 0);
-        p.Controls.Add(b);
+        b.Margin = new Padding(0, 6, 16, 0);
+        if (link is { } l)
+        {
+            var ll = new LinkLabel { Text = l.Text, AutoSize = true, Font = Ui.Base, Margin = new Padding(0, 12, 0, 0) };
+            ll.LinkClicked += (_, _) => l.Click();
+            p.Controls.Add(Ui.Row(b, ll));
+        }
+        else p.Controls.Add(b);
         return p;
     }
 
