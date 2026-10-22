@@ -1,0 +1,19 @@
+name: Идея / Feature request
+description: Чего не хватает
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу администратора видеоархива это решит
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Как это могло бы работать
+  - type: input
+    id: setup
+    attributes:
+      label: Ваша установка (по желанию)
+      placeholder: 2 сервера, ~100 камер, iSCSI-диски

@@ -219,10 +219,10 @@ public static class HtmlReport
             var cls = c.LostKind is "no-archive" or "silent" ? " class=\"rowwarn\"" : "";
             sb.Append("<tr").Append(cls).Append('>').Append(Td(c.Name, cls: "strong", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
             if (multi) sb.Append(Td(r.ServerName));
-            sb.Append(Td(what)).Append(TdDate(c.NewestUtc, withTime: true))
+            sb.Append("<td class=\"wrap\">").Append(H(what)).Append("</td>").Append(TdDate(c.NewestUtc, withTime: true))
               .Append(TdN(c.SilentDays is double sd ? sd.ToString("0", Ru) + " дн." : "—", c.SilentDays ?? 99999))
               .Append(c.ArchiveUntilUtc is DateTime uu ? TdDate(uu) : TdN("—", 0)).Append(TdN(Bytes(c.Bytes), c.Bytes))
-              .Append("<td class=\"small\" style=\"white-space:normal;min-width:260px\">").Append(H(todo)).Append("</td></tr>");
+              .Append("<td class=\"small todo\">").Append(H(todo)).Append("</td></tr>");
         }
         sb.Append("</tbody></table></div></section>");
     }
@@ -364,6 +364,7 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
 td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
 .spark{display:inline-block;vertical-align:top;margin:6px 18px 10px 0;width:420px;max-width:100%}.spark svg{width:100%;height:70px;display:block;background:var(--bg);border-radius:6px}.spark .label{font-size:12px;color:var(--muted);margin-bottom:4px}.spark .label b{color:var(--text)}
+td.wrap{white-space:normal;min-width:170px;max-width:260px}td.todo{white-space:normal;min-width:220px;max-width:340px}
 td.status2{white-space:normal;line-height:1.3;min-width:150px}td.status2 b{color:var(--text);font-weight:600}
 tr.drv{cursor:pointer}tr.drv:hover,tr.drv.open{background:var(--bg)}tr.drv:focus{outline:2px solid var(--accent);outline-offset:-2px}
 tr.detail>td{padding:4px 10px 14px 28px;background:var(--bg);white-space:normal}

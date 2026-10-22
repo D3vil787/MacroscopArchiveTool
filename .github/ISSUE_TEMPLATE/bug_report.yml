@@ -1,0 +1,43 @@
+name: Ошибка / Bug report
+description: Что-то работает не так
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо! Пожалуйста, **не публикуйте** IP-адреса, имена серверов и камер, пароли — замажьте их на скриншотах и в журналах.
+  - type: input
+    id: version
+    attributes:
+      label: Версия MacroscopArchiveTool
+      description: Видна в заголовке окна или `mat.exe version`
+      placeholder: 0.8.1
+    validations:
+      required: true
+  - type: input
+    id: macroscop
+    attributes:
+      label: Версия и редакция Macroscop
+      placeholder: 4.7.172, Standalone / Server, лицензия LS / ULTRA / Enterprise
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      placeholder: Windows Server 2019
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло и что ожидалось
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить
+      placeholder: 1. Открыть … 2. Нажать …
+  - type: textarea
+    id: log
+    attributes:
+      label: Журнал
+      description: Окно «Журнал» в программе, reports\scheduled_scan.log или %ProgramData%\MacroscopArchiveTool\retire\*.json (поле log)
+      render: text

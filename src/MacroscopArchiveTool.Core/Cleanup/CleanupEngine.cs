@@ -188,7 +188,7 @@ public sealed class CleanupEngine
             scan.Items.Add(new CleanupItem
             {
                 Category = CleanupCategory.OrphanEventDb, Action = CleanupAction.ShowOnly,
-                Title = $"{name} — {HtmlReport.Bytes(bytes)}",
+                Title = name,
                 Note = "Ни на одном подключённом диске нет архива с этим идентификатором. Если диск отключён навсегда, базу можно удалить средствами PostgreSQL.",
                 Paths = { name }, Bytes = bytes,
             });
