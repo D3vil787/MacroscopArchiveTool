@@ -39,8 +39,16 @@ public interface ISystemOps
     IReadOnlyList<string> StopPostgres(Action<string> log);
     void StartServices(IEnumerable<string> names, Action<string> log);
 
-    /// <summary>Scheduled task at system start-up that attaches the VHDX and mounts it at the letter.</summary>
-    void CreateAttachTask(string taskName, string vhdxPath, char letter, Action<string> log);
+    /// <summary>Windows service that runs the Macroscop server, with its start mode ("Auto", "Manual", "Disabled"), or null (Standalone).</summary>
+    (string Name, string StartMode)? MacroscopService();
+    /// <summary>Sets a service start mode: "Auto", "Manual" or "Disabled".</summary>
+    void SetServiceStartMode(string service, string mode, Action<string> log);
+
+    /// <summary>
+    /// Scheduled task at system start-up that attaches the VHDX and mounts it at the letter, then starts
+    /// <paramref name="startServiceAfter"/> (if given) — also when attaching failed, so recording never stays off.
+    /// </summary>
+    void CreateAttachTask(string taskName, string vhdxPath, char letter, string? startServiceAfter, Action<string> log);
     void DeleteTask(string taskName, Action<string> log);
     bool TaskExists(string taskName);
 }

@@ -55,6 +55,9 @@ public sealed class RetireState
 
     public List<string> StoppedServices { get; set; } = new();
     public string? AttachTaskName { get; set; }
+    /// <summary>Macroscop service switched to manual start while the VHDX exists, and its original start mode.</summary>
+    public string? MacroscopService { get; set; }
+    public string? MacroscopServiceStartMode { get; set; }
 
     public long BytesCopied { get; set; }
     public List<CopyLoss> Losses { get; set; } = new();

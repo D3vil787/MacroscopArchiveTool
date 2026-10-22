@@ -33,6 +33,8 @@ partial class Program
         R.True(!fx.Ops.Letters.ContainsKey(s.TempLetter), "временная буква освобождена");
         R.True(!fx.Ops.Letters.ContainsValue(s.SourceVolumeId!), "старый диск без буквы");
         R.True(fx.Ops.Tasks.Contains(s.AttachTaskName!), "задача автоподключения");
+        R.Eq("MacroscopServer", fx.Ops.AttachStartsService, "задача запускает Macroscop после подключения диска");
+        R.Eq("Manual", fx.Ops.ServiceMode, "служба Macroscop на ручном запуске");
         R.True(fx.Ops.OfflineDisks.Contains("disk-" + s.SourceVolumeId) && s.SourceDiskOffline, "старый диск вне сети");
         R.Eq(string.Join(",", fx.Ops.PostgresServices), string.Join(",", fx.Ops.Started), "PostgreSQL запущен обратно");
         R.Eq(3, File.ReadAllBytes(Path.Combine(fx.Ops.RootOf('J'), "MacroscopArchive", "db", "PG_16", "16400")).Length, "база скопирована при переключении");
@@ -50,6 +52,7 @@ partial class Program
         R.True(!fx.Ops.Letters.ContainsKey('J'), "буква J свободна");
         R.True(fx.Ops.Tasks.Count == 0, "задача удалена");
         R.True(fx.Ops.Detached.Contains(s.VhdxPath), "VHDX отключён");
+        R.Eq("Auto", fx.Ops.ServiceMode, "режим запуска службы возвращён после завершения");
     }
 
     internal static void RetireSwitchFailureRollsBack()
@@ -82,6 +85,7 @@ partial class Program
         R.Eq(srcVol, fx.Ops.Letters['J'], "откат: исходный диск J");
         R.Eq(0, fx.Ops.Tasks.Count, "откат: задача удалена");
         R.Eq(0, fx.Ops.OfflineDisks.Count, "откат: старый диск снова в сети");
+        R.Eq("Auto", fx.Ops.ServiceMode, "откат: режим запуска службы возвращён");
     }
 
     internal static void RetirePrecheckAndCancel()
@@ -226,7 +230,11 @@ sealed class FakeSystemOps : ISystemOps
     public bool TryStopMacroscopService(Action<string> log) => false;
     public IReadOnlyList<string> StopPostgres(Action<string> log) => PostgresServices.ToList();
     public void StartServices(IEnumerable<string> names, Action<string> log) => Started.AddRange(names);
-    public void CreateAttachTask(string taskName, string vhdxPath, char letter, Action<string> log) => Tasks.Add(taskName);
+    public void CreateAttachTask(string taskName, string vhdxPath, char letter, string? startServiceAfter, Action<string> log) { Tasks.Add(taskName); AttachStartsService = startServiceAfter; }
+    public string? AttachStartsService;
+    public string ServiceMode = "Auto";
+    public (string Name, string StartMode)? MacroscopService() => ("MacroscopServer", ServiceMode);
+    public void SetServiceStartMode(string service, string mode, Action<string> log) => ServiceMode = mode;
     public void DeleteTask(string taskName, Action<string> log) => Tasks.Remove(taskName);
     public bool TaskExists(string taskName) => Tasks.Contains(taskName);
 }

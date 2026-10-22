@@ -213,8 +213,19 @@ public sealed class RetireOrchestrator
             if (s.TargetKind == TargetKind.Vhdx)
             {
                 s.AttachTaskName = TaskFolder + $"Attach_{s.SourceLetter}";
-                _ops.CreateAttachTask(s.AttachTaskName, s.VhdxPath!, s.SourceLetter, m => Log(s, m));
+                var svc = SafeService(s);
+                _ops.CreateAttachTask(s.AttachTaskName, s.VhdxPath!, s.SourceLetter, svc?.Name, m => Log(s, m));
                 Log(s, "Создана задача автоподключения виртуального диска при загрузке Windows.");
+                if (svc is { } service && !string.Equals(service.StartMode, "Disabled", StringComparison.OrdinalIgnoreCase))
+                {
+                    s.MacroscopService = service.Name;
+                    s.MacroscopServiceStartMode ??= service.StartMode;
+                    _ops.SetServiceStartMode(service.Name, "Manual", m => Log(s, m));
+                    Log(s, $"Служба {service.Name} переведена на ручной запуск: при загрузке Windows её запустит задача автоподключения — " +
+                           $"после того как появится диск {s.SourceLetter}:. При откате и завершении прежний режим ({service.StartMode}) вернётся.");
+                }
+                else if (svc == null)
+                    Log(s, $"Macroscop работает не как служба Windows (Standalone): после перезагрузки сервера проверьте в Конфигураторе, что диск {s.SourceLetter}: на месте.");
             }
 
             TakeSourceOffline(s, disk);
@@ -244,6 +255,7 @@ public sealed class RetireOrchestrator
         if (_ops.RunningMacroscop().Count > 0) throw new InvalidOperationException("Сначала остановите Macroscop.");
         RestoreLetters(s);
         if (s.AttachTaskName != null && _ops.TaskExists(s.AttachTaskName)) _ops.DeleteTask(s.AttachTaskName, m => Log(s, m));
+        RestoreServiceStartMode(s);
         s.Stage = RetireStage.Copied;
         Log(s, "Откат выполнен: исходный диск снова на своей букве.");
         s.Save(_stateDir);
@@ -275,6 +287,7 @@ public sealed class RetireOrchestrator
         var (left, _) = Remaining(s);
         if (left > 0) throw new InvalidOperationException($"На диске ещё {HtmlReport.Bytes(left)} записей. Дождитесь, пока Macroscop удалит их по сроку хранения.");
         if (s.AttachTaskName != null && _ops.TaskExists(s.AttachTaskName)) _ops.DeleteTask(s.AttachTaskName, m => Log(s, m));
+        RestoreServiceStartMode(s);
         _ops.RemoveLetter(s.SourceLetter, m => Log(s, m));
         if (s.TargetKind == TargetKind.Vhdx && s.VhdxPath != null)
         {
@@ -315,6 +328,24 @@ public sealed class RetireOrchestrator
         {
             Log(s, $"Не удалось перевести старый диск ({where}) в режим «Вне сети»: {ex.Message}. Сделайте это вручную в «Управлении дисками».");
         }
+    }
+
+    private (string Name, string StartMode)? SafeService(RetireState s)
+    {
+        try { return _ops.MacroscopService(); }
+        catch (Exception ex) { Log(s, "Не удалось определить службу Macroscop: " + ex.Message); return null; }
+    }
+
+    private void RestoreServiceStartMode(RetireState s)
+    {
+        if (s.MacroscopService == null || s.MacroscopServiceStartMode == null) return;
+        try
+        {
+            _ops.SetServiceStartMode(s.MacroscopService, s.MacroscopServiceStartMode, m => Log(s, m));
+            Log(s, $"Службе {s.MacroscopService} возвращён режим запуска {s.MacroscopServiceStartMode}.");
+            s.MacroscopService = s.MacroscopServiceStartMode = null;
+        }
+        catch (Exception ex) { Log(s, $"Не удалось вернуть режим запуска службы {s.MacroscopService}: {ex.Message}. Верните «Автоматически» вручную в services.msc."); }
     }
 
     private void BringSourceOnline(RetireState s)

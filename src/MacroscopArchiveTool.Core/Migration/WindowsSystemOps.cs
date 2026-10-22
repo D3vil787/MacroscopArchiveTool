@@ -151,11 +151,24 @@ public sealed class WindowsSystemOps : ISystemOps
         foreach (var n in names) PsChecked(log, $"Start-Service -Name '{n}'");
     }
 
-    public void CreateAttachTask(string taskName, string vhdxPath, char letter, Action<string> log)
+    public (string Name, string StartMode)? MacroscopService()
+    {
+        var line = Ps("Get-CimInstance Win32_Service | Where-Object { $_.PathName -match 'MacroscopServer\\.exe' } | Select-Object -First 1 | ForEach-Object { \"$($_.Name)|$($_.StartMode)\" }").Trim();
+        var parts = line.Split('|');
+        return parts.Length == 2 && parts[0].Length > 0 ? (parts[0], parts[1]) : null;
+    }
+
+    public void SetServiceStartMode(string service, string mode, Action<string> log)
+    {
+        var sc = mode.ToLowerInvariant() switch { "auto" => "auto", "manual" => "demand", "disabled" => "disabled", _ => throw new ArgumentException(mode) };
+        Checked(log, "sc.exe", $"config \"{service}\" start= {sc}");
+    }
+
+    public void CreateAttachTask(string taskName, string vhdxPath, char letter, string? startServiceAfter, Action<string> log)
     {
         Directory.CreateDirectory(DataDir);
         var script = Path.Combine(DataDir, $"attach_{letter}.ps1");
-        File.WriteAllText(script, AttachScript(vhdxPath, letter), new UTF8Encoding(true));
+        File.WriteAllText(script, AttachScript(vhdxPath, letter, startServiceAfter), new UTF8Encoding(true));
         log($"Скрипт автоподключения: {script}");
         Checked(log, "schtasks.exe",
             $"/Create /TN \"{taskName}\" /SC ONSTART /RU SYSTEM /RL HIGHEST /F /TR \"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \\\"{script}\\\"\"");
@@ -166,13 +179,17 @@ public sealed class WindowsSystemOps : ISystemOps
     public bool TaskExists(string taskName) => Run("schtasks.exe", $"/Query /TN \"{taskName}\"").Code == 0;
 
     /// <summary>PowerShell run at start-up: attach the VHDX if needed and make sure the volume is at the letter.</summary>
-    public static string AttachScript(string vhdxPath, char letter) => $$"""
-# MacroscopArchiveTool: attaches a retired Macroscop archive disk at Windows start-up.
+    public static string AttachScript(string vhdxPath, char letter, string? startServiceAfter = null) => $$"""
+# MacroscopArchiveTool: attaches a retired Macroscop archive disk at Windows start-up,
+# then starts the Macroscop service (which is set to manual start so it never runs without this disk).
 $ErrorActionPreference = 'Stop'
 $img = '{{vhdxPath.Replace("'", "''")}}'
 $letter = '{{letter}}'
+$service = '{{(startServiceAfter ?? "").Replace("'", "''")}}'
 $log = Join-Path $env:ProgramData 'MacroscopArchiveTool\attach.log'
-try {
+$ok = $false
+for ($attempt = 1; $attempt -le 20 -and -not $ok; $attempt++) {
+  try {
     $di = Get-DiskImage -ImagePath $img
     if (-not $di.Attached) { Mount-DiskImage -ImagePath $img -StorageType VHDX | Out-Null; Start-Sleep -Seconds 2; $di = Get-DiskImage -ImagePath $img }
     $disk = $di | Get-Disk
@@ -184,10 +201,17 @@ try {
         Set-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber -NewDriveLetter $letter
     }
     "$(Get-Date -Format s) OK: $img -> ${letter}:" | Add-Content -Path $log
-} catch {
-    "$(Get-Date -Format s) ERROR: $img -> ${letter}: $($_.Exception.Message)" | Add-Content -Path $log
-    exit 1
+    $ok = $true
+  } catch {
+    "$(Get-Date -Format s) ERROR (attempt $attempt): $img -> ${letter}: $($_.Exception.Message)" | Add-Content -Path $log
+    Start-Sleep -Seconds 15
+  }
 }
+if ($service) {
+    try { Start-Service -Name $service; "$(Get-Date -Format s) Service $service started" | Add-Content -Path $log }
+    catch { "$(Get-Date -Format s) ERROR starting $service: $($_.Exception.Message)" | Add-Content -Path $log }
+}
+if (-not $ok) { exit 1 }
 """;
 
     private static Dictionary<char, string> VirtualDiskLetters()
