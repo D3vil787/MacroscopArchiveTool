@@ -66,6 +66,7 @@ internal static class Program
         Directory.CreateDirectory(outDir);
         var baseName = Path.Combine(outDir, ReportStore.BaseFileName(report));
         ReportStore.SaveJson(report, baseName + ".json");
+        try { MetricsWriter.Write(report); } catch (Exception ex) { Console.WriteLine("  ! metrics.json не записан: " + ex.Message); }
         Console.WriteLine();
         Console.WriteLine($"Готово за {report.ScanSeconds} с. Камер: {report.Cameras.Count}, дисков: {report.Drives.Count}.");
         Console.WriteLine($"Видео в архиве: {HtmlReport.Bytes(report.Drives.Sum(d => d.MediaBytes))}, пишется в сутки: {HtmlReport.Bytes((long)ReportAnalyzer.DailyRate(report))}");
@@ -74,7 +75,8 @@ internal static class Program
 
         if (!a.Has("--no-html"))
         {
-            File.WriteAllText(baseName + ".html", HtmlReport.Render(new[] { report }), new UTF8Encoding(true));
+            var history = new Dictionary<string, List<HistoryPoint>> { [report.MachineName] = ReportHistory.Load(outDir, report.MachineName) };
+            File.WriteAllText(baseName + ".html", HtmlReport.Render(new[] { report }, history), new UTF8Encoding(true));
             Console.WriteLine($"HTML: {baseName}.html");
             if (a.Has("--open")) OpenFile(baseName + ".html");
         }
@@ -91,7 +93,9 @@ internal static class Program
         foreach (var r in reports) ReportAnalyzer.Analyze(r, config.HeavyFactor);   // same rules for every server
         var output = a.Get("-o") ?? a.Get("--out") ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(inputs[0]))!,
             $"macroscop_сводный_{DateTime.Now:yyyyMMdd_HHmm}.html");
-        File.WriteAllText(output, HtmlReport.Render(reports), new UTF8Encoding(true));
+        var dir = Path.GetDirectoryName(Path.GetFullPath(inputs[0]))!;
+        var history = reports.Select(r => r.MachineName).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(m => m, m => ReportHistory.Load(dir, m), StringComparer.OrdinalIgnoreCase);
+        File.WriteAllText(output, HtmlReport.Render(reports, history), new UTF8Encoding(true));
         Console.WriteLine($"Сводный отчёт по {reports.Count} серверам: {output}");
         if (a.Has("--open")) OpenFile(output);
         return 0;
@@ -161,7 +165,7 @@ internal static class Program
         if (!OperatingSystem.IsWindows()) return Fail("Расписание доступно только в Windows.");
         var day = (a.Get("--day") ?? "MON").ToUpperInvariant();
         var time = a.Get("--time") ?? "06:00";
-        if (!System.Text.RegularExpressions.Regex.IsMatch(day, "^(MON|TUE|WED|THU|FRI|SAT|SUN)$")) return Fail("--day: MON, TUE, WED, THU, FRI, SAT или SUN");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(day, "^(MON|TUE|WED|THU|FRI|SAT|SUN|DAILY)$")) return Fail("--day: MON, TUE, WED, THU, FRI, SAT, SUN или DAILY (каждый день)");
         if (!TimeOnly.TryParse(time, out _)) return Fail("--time в формате ЧЧ:ММ");
 
         // schtasks /TR is limited to 261 characters, so the task runs a small .bat next to the exe.
@@ -169,9 +173,9 @@ internal static class Program
         File.WriteAllText(bat, "@echo off\r\ncd /d \"%~dp0\"\r\nmat.exe scan >> \"%~dp0reports\\scheduled_scan.log\" 2>&1\r\n", Encoding.ASCII);
         Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "reports"));
 
-        var code = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"\\\"{bat}\\\"\" /SC WEEKLY /D {day} /ST {time} /RU SYSTEM /RL HIGHEST /F");
+        var code = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"\\\"{bat}\\\"\" {(day == "DAILY" ? "/SC DAILY" : $"/SC WEEKLY /D {day}")} /ST {time} /RU SYSTEM /RL HIGHEST /F");
         if (code != 0) return Fail("Не удалось создать задание. Запустите от имени администратора.");
-        Console.WriteLine($"Создано задание Планировщика «{TaskName}»: скан каждую неделю, {day} в {time}, от имени SYSTEM.");
+        Console.WriteLine($"Создано задание Планировщика «{TaskName}»: скан {(day == "DAILY" ? "каждый день" : $"каждую неделю, {day}")} в {time}, от имени SYSTEM.");
         Console.WriteLine($"Отчёты и журнал: {Path.Combine(AppContext.BaseDirectory, "reports")}");
         return 0;
     }
@@ -252,7 +256,7 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
                   cleanup apply --plan FILE                                    перенести выбранное в карантин
                   cleanup restore --set ID | cleanup purge --set ID|--older-than N
   schedule      Еженедельный скан через Планировщик Windows (от администратора)
-                  [--day MON] [--time 06:00]
+                  [--day MON|…|SUN|DAILY] [--time 06:00]   (для Zabbix удобнее DAILY: metrics.json обновляется после каждого скана)
   unschedule    Удалить еженедельный скан
   version       Показать версию
 """);

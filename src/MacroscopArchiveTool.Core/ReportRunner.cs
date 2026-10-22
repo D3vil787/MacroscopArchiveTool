@@ -29,11 +29,13 @@ public static class ReportRunner
         Directory.CreateDirectory(outDir);
         var baseName = Path.Combine(outDir, ReportStore.BaseFileName(report));
         ReportStore.SaveJson(report, baseName + ".json");
+        try { MetricsWriter.Write(report); } catch (Exception ex) { progress?.Report("metrics.json не записан: " + ex.Message); }
         string? htmlPath = null;
         if (html)
         {
             htmlPath = baseName + ".html";
-            File.WriteAllText(htmlPath, HtmlReport.Render(new[] { report }), new UTF8Encoding(true));
+            var history = new Dictionary<string, List<HistoryPoint>> { [report.MachineName] = ReportHistory.Load(outDir, report.MachineName) };
+            File.WriteAllText(htmlPath, HtmlReport.Render(new[] { report }, history), new UTF8Encoding(true));
         }
         return new Result(report, baseName + ".json", htmlPath);
     }

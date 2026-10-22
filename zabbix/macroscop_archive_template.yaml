@@ -1,0 +1,363 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+  - uuid: d0e41c3042ab4c5cb0b7f34bb60d58ba
+    name: Templates/Applications
+  templates:
+  - uuid: 38f3d6e3d9fa461285150c98eb1eaa1a
+    template: Macroscop Archive by MacroscopArchiveTool
+    name: Macroscop Archive by MacroscopArchiveTool
+    description: 'Macroscop VMS archive usage from MacroscopArchiveTool (https://github.com/D3vil787/MacroscopArchiveTool). The agent reads metrics.json written after every archive scan; see zabbix/README.md.'
+    vendor:
+      name: MacroscopArchiveTool
+      version: 7.0-0
+    groups:
+    - name: Templates/Applications
+    items:
+    - uuid: e7911001754041e6936b79f28b165226
+      name: 'Macroscop: metrics.json'
+      key: macroscop.metrics
+      delay: 10m
+      history: '0'
+      value_type: TEXT
+      trends: '0'
+      description: 'Contents of %ProgramData%\MacroscopArchiveTool\metrics.json, written by MacroscopArchiveTool after every archive scan (mat.exe scan / scheduled scan).'
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: bd1639dd20b34a1390e0bc6147045865
+        expression: 'nodata(/Macroscop Archive by MacroscopArchiveTool/macroscop.metrics,30m)=1'
+        name: 'Macroscop: metrics.json is not readable by the agent'
+        priority: WARNING
+        description: Check UserParameter macroscop.metrics in the agent config and that a scan has run at least once.
+    - uuid: 47933ffde7c04857a55076e0c3983e7f
+      name: 'Macroscop: last scan time'
+      type: DEPENDENT
+      key: macroscop.scanned
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      units: unixtime
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.scanned_unix'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: dc007a9cdd134f40b4f02659905c4af9
+        expression: 'now()-last(/Macroscop Archive by MacroscopArchiveTool/macroscop.scanned)>{$MACROSCOP.SCAN.MAXAGE}'
+        name: 'Macroscop: archive scan is older than {$MACROSCOP.SCAN.MAXAGE}'
+        priority: WARNING
+        description: The scheduled scan (mat.exe schedule) did not run; values below are stale.
+    - uuid: 8ed3f5daa4fb4b45a76077842e30e1be
+      name: 'Macroscop: video in archive'
+      type: DEPENDENT
+      key: macroscop.video_bytes
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      units: B
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.video_bytes'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: 62553e4c2f164db6b6e96ba165b6bf7c
+      name: 'Macroscop: written per day'
+      type: DEPENDENT
+      key: macroscop.daily_bytes
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      units: B
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.daily_bytes'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: a932273c7a244c6580779cf199ac09d5
+      name: 'Macroscop: max archive depth'
+      type: DEPENDENT
+      key: macroscop.max_depth_days
+      delay: '0'
+      history: 90d
+      value_type: FLOAT
+      units: d
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.max_depth_days'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: 3468f0cc064b4e6bbb30ac0cc1f5a80a
+      name: 'Macroscop: free space on active disks'
+      type: DEPENDENT
+      key: macroscop.active_free_bytes
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      units: B
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.active_free_bytes'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: 5ee6f2ed6a104b14bafee7161d3b454b
+      name: 'Macroscop: days until active disks are full'
+      type: DEPENDENT
+      key: macroscop.headroom_days
+      delay: '0'
+      history: 90d
+      value_type: FLOAT
+      units: d
+      description: 'Rough estimate: free space on disks written during the last day divided by the daily volume. -1 = unknown.'
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.headroom_days'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: e4c7f06de7d64feb9f94ddf07d47066e
+        expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.headroom_days)>=0 and last(/Macroscop Archive by MacroscopArchiveTool/macroscop.headroom_days)<{$MACROSCOP.HEADROOM.MIN}'
+        name: 'Macroscop: active archive disks full in less than {$MACROSCOP.HEADROOM.MIN} days'
+        priority: WARNING
+        description: Macroscop will start overwriting the oldest recordings earlier than the configured retention.
+    - uuid: b3f9f8b9588043edb61cc0bbcd69075d
+      name: 'Macroscop: cameras'
+      type: DEPENDENT
+      key: macroscop.cameras
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: 6aa86910dc2a44b896db13bbe31846f7
+      name: 'Macroscop: cameras over retention'
+      type: DEPENDENT
+      key: macroscop.cameras_over_retention
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_over_retention'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: 0230dd9a2d3146fbb16fb6c4b43ec6fd
+        expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_over_retention)>0'
+        name: 'Macroscop: {ITEM.LASTVALUE} cameras keep recordings longer than their retention'
+        priority: INFO
+        description: See the "Камеры" table of the MacroscopArchiveTool report.
+    - uuid: bfc6273c01dd4b4aa236ca54f0054209
+      name: 'Macroscop: heavy cameras'
+      type: DEPENDENT
+      key: macroscop.cameras_heavy
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_heavy'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: e1de618d3e5f49ba943b1ffac8d511e9
+      name: 'Macroscop: scan warnings'
+      type: DEPENDENT
+      key: macroscop.warnings
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.warnings'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    discovery_rules:
+    - uuid: d2011633973b4e3b929655526d4173cd
+      name: Macroscop archive disks
+      type: DEPENDENT
+      key: macroscop.drives.discovery
+      delay: '0'
+      lifetime: 30d
+      item_prototypes:
+      - uuid: 0ab91023ad6e47d09c4d40568bf9c40e
+        name: 'Disk {#DRIVE}: used'
+        type: DEPENDENT
+        key: 'macroscop.drive.used_pct[{#DRIVE}]'
+        delay: '0'
+        value_type: FLOAT
+        units: '%'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].used_pct.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      - uuid: 36ea987290594000a46d1b743b56bfe2
+        name: 'Disk {#DRIVE}: free'
+        type: DEPENDENT
+        key: 'macroscop.drive.free_bytes[{#DRIVE}]'
+        delay: '0'
+        value_type: UNSIGNED
+        units: B
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].free_bytes.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      - uuid: b3a33cdf09f2417a98ea9efc9fbce762
+        name: 'Disk {#DRIVE}: video'
+        type: DEPENDENT
+        key: 'macroscop.drive.video_bytes[{#DRIVE}]'
+        delay: '0'
+        value_type: UNSIGNED
+        units: B
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].video_bytes.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      - uuid: c91c303357a841f88637375db0923264
+        name: 'Disk {#DRIVE}: last recording'
+        type: DEPENDENT
+        key: 'macroscop.drive.last_write[{#DRIVE}]'
+        delay: '0'
+        value_type: UNSIGNED
+        units: unixtime
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].last_write_unix.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      - uuid: 9d2da577aa254a7d8e3da30dcefbdedd
+        name: 'Disk {#DRIVE}: recorded during the last day'
+        type: DEPENDENT
+        key: 'macroscop.drive.active[{#DRIVE}]'
+        delay: '0'
+        value_type: UNSIGNED
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].active.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      - uuid: 6bc73179a6414ea1a5f32ec41efac2d0
+        name: 'Disk {#DRIVE}: expected to be recording'
+        type: DEPENDENT
+        key: 'macroscop.drive.expected[{#DRIVE}]'
+        delay: '0'
+        value_type: UNSIGNED
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].expected_active.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      - uuid: cce376c2978649c78091cba39b109e37
+        name: 'Disk {#DRIVE}: empties by retention on'
+        type: DEPENDENT
+        key: 'macroscop.drive.drain[{#DRIVE}]'
+        delay: '0'
+        value_type: UNSIGNED
+        units: unixtime
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - '$.drives[?(@.name==''{#DRIVE}'')].drain_unix.first()'
+        master_item:
+          key: macroscop.metrics
+        tags:
+        - tag: disk
+          value: '{#DRIVE}'
+      trigger_prototypes:
+      - uuid: 29ce7afa16e2449098731880f2e02c41
+        expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.drive.active[{#DRIVE}])=0 and last(/Macroscop Archive by MacroscopArchiveTool/macroscop.drive.expected[{#DRIVE}])=1'
+        name: 'Macroscop: no recordings on archive disk {#DRIVE} for more than a day'
+        priority: AVERAGE
+        description: 'The disk has an archive role in Macroscop but nothing was written to it during the day before the scan (disk full, offline or excluded?).'
+      master_item:
+        key: macroscop.metrics
+      lld_macro_paths:
+      - lld_macro: '{#DRIVE}'
+        path: '$.name'
+      - lld_macro: '{#ROLE}'
+        path: '$.role'
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.drives'
+    tags:
+    - tag: class
+      value: application
+    macros:
+    - macro: '{$MACROSCOP.HEADROOM.MIN}'
+      value: '14'
+      description: Warn when active archive disks are expected to be full in fewer days
+    - macro: '{$MACROSCOP.SCAN.MAXAGE}'
+      value: 2d
+      description: Warn when the last archive scan is older (use 8d with a weekly schedule)

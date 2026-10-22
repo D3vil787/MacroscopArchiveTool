@@ -107,7 +107,8 @@ internal sealed class ReportForm : Form
             else
             {
                 _htmlPath = Path.Combine(ReportsDir, $"macroscop_сводный_{DateTime.Now:yyyyMMdd_HHmm}.html");
-                File.WriteAllText(_htmlPath, HtmlReport.Render(reports), new UTF8Encoding(true));
+                var history = reports.Select(r => r.MachineName).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(m => m, m => ReportHistory.Load(ReportsDir, m), StringComparer.OrdinalIgnoreCase);
+                File.WriteAllText(_htmlPath, HtmlReport.Render(reports, history), new UTF8Encoding(true));
             }
             _status.Text = $"Готово: {reports.Count} сервер(а), {reports.Sum(r => r.Cameras.Count)} камер, видео {Ui.Bytes(reports.Sum(r => r.Drives.Sum(d => d.MediaBytes)))}." +
                            (failed > 0 ? $" Не удалось: {failed} — см. ниже." : "");

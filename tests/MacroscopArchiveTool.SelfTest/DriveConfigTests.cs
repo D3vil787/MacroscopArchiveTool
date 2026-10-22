@@ -12,6 +12,14 @@ using MacroscopArchiveTool.Core.Nrbf;
 
 partial class Program
 {
+    private static string SaveTo(string dir, ScanReport r, string name)
+    {
+        Directory.CreateDirectory(dir);
+        var p = Path.Combine(dir, name);
+        ReportStore.SaveJson(r, p);
+        return p;
+    }
+
     internal static void DriveRolesAndDrainForecast()
     {
         var s = new FakeServerSettings();
@@ -42,6 +50,29 @@ partial class Program
         R.True(a.DrainForecastUtc == null, "у активного диска прогноза нет");
         R.Eq(new DateTime(2026, 12, 24), j.DrainForecastUtc!.Value.ToLocalTime().Date, "J: опустеет: 24.09 + 90 дн. + 1");
         R.True(HtmlReport.Render(new[] { report }).Contains("опустеет ≈ 24.12.2026"), "прогноз в отчёте");
+
+        // metrics.json for Zabbix and the "how it changes" section.
+        var tmp = Path.Combine(Path.GetTempPath(), "mat_metrics_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            report.MachineName = "SRV1"; report.ToolVersion = "test";
+            MetricsWriter.Write(report, Path.Combine(tmp, "metrics.json"));
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(tmp, "metrics.json")));
+            R.Eq(2, doc.RootElement.GetProperty("drives").GetArrayLength(), "диски в metrics.json");
+            R.Eq("J:", doc.RootElement.GetProperty("drives")[1].GetProperty("name").GetString(), "имя диска для обнаружения в Zabbix");
+            R.Eq(1, doc.RootElement.GetProperty("drives")[0].GetProperty("expected_active").GetInt32(), "A: должен получать записи");
+            R.True(doc.RootElement.GetProperty("drives")[1].GetProperty("drain_unix").GetInt64() > 0, "дата опустения J:");
+
+            var older = ReportStore.LoadJson(SaveTo(tmp, report, "macroscop_SRV1_old.json"));
+            older.ScannedAtUtc = report.ScannedAtUtc.AddDays(-7);
+            older.Drives[0].MediaBytes = 10;
+            ReportStore.SaveJson(older, Path.Combine(tmp, "macroscop_SRV1_old.json"));
+            var hist = ReportHistory.Load(tmp, "SRV1");
+            R.Eq(1, hist.Count, "один прежний скан в истории");
+            var html = HtmlReport.Render(new[] { report }, new Dictionary<string, List<HistoryPoint>> { ["SRV1"] = hist });
+            R.True(html.Contains("Динамика") && html.Contains("<polyline"), "раздел динамики с графиком");
+        }
+        finally { try { Directory.Delete(tmp, true); } catch (Exception) { } }
     }
 }
 #pragma warning restore SYSLIB0011

@@ -26,6 +26,7 @@
   <ItemGroup>
     <None Include="..\..\dist\*.bat" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" LinkBase="." />
     <None Include="..\..\dist\mat.example.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" LinkBase="." />
+    <None Include="..\..\zabbix\macroscop.conf;..\..\zabbix\macroscop_archive_template.yaml;..\..\zabbix\README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" LinkBase="zabbix" />
   </ItemGroup>
 
 </Project>

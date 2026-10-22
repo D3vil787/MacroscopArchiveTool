@@ -9,7 +9,8 @@ public static class HtmlReport
 {
     private static readonly CultureInfo Ru = CultureInfo.GetCultureInfo("ru-RU");
 
-    public static string Render(IReadOnlyList<ScanReport> reports)
+    /// <param name="history">Earlier scans per machine name (see <see cref="ReportHistory"/>), shown as "how it changes".</param>
+    public static string Render(IReadOnlyList<ScanReport> reports, IReadOnlyDictionary<string, List<HistoryPoint>>? history = null)
     {
         var sb = new StringBuilder(64 * 1024);
         var title = reports.Count == 1 ? $"Архив Macroscop — {reports[0].ServerName}" : "Архив Macroscop — сводный отчёт";
@@ -23,7 +24,11 @@ public static class HtmlReport
           .Append("</p></header>");
 
         if (reports.Count > 1) RenderOverall(sb, reports);
-        for (int i = 0; i < reports.Count; i++) RenderServer(sb, reports[i], reports.Count > 1, i);
+        for (int i = 0; i < reports.Count; i++)
+        {
+            RenderServer(sb, reports[i], reports.Count > 1, i);
+            if (history != null && history.TryGetValue(reports[i].MachineName, out var h)) RenderHistory(sb, reports[i], h);
+        }
         RenderCameras(sb, reports);
         RenderNotes(sb);
 
@@ -184,6 +189,44 @@ public static class HtmlReport
         "<li><b>До заполнения</b> — грубая оценка по свободному месту дисков, куда шла запись за сутки. Лимиты Macroscop «Мин. своб. место» и «Макс. размер архива» не учитываются.</li>" +
         "</ul></section>");
 
+    private static void RenderHistory(StringBuilder sb, ScanReport r, List<HistoryPoint> points)
+    {
+        var all = points.Where(p => p.ScannedAtUtc < r.ScannedAtUtc.AddMinutes(-1)).Append(ReportHistory.Point(r)).OrderBy(p => p.ScannedAtUtc).ToList();
+        if (all.Count < 2) return;
+        sb.Append("<section><h2>Динамика").Append(reports(r)).Append("</h2><p class=\"muted\">По сохранённым отчётам в папке reports: ")
+          .Append(all.Count).Append(" сканов с ").Append(H(all[0].ScannedAtUtc.ToLocalTime().ToString("dd.MM.yyyy", Ru))).Append(".</p>");
+        Spark(sb, "Видео в архиве", all.Select(p => (p.ScannedAtUtc, (double)p.VideoBytes)).ToList(), v => Bytes((long)v));
+        Spark(sb, "Свободно на активных дисках", all.Select(p => (p.ScannedAtUtc, (double)p.ActiveFreeBytes)).ToList(), v => Bytes((long)v));
+        Spark(sb, "Макс. глубина, дн.", all.Select(p => (p.ScannedAtUtc, p.MaxDepthDays)).ToList(), v => v.ToString("0", Ru));
+        sb.Append("<div class=\"scroll\"><table><thead><tr>").Append(Th("Скан")).Append(Th("Видео", true)).Append(Th("Пишется в сутки", true))
+          .Append(Th("Макс. глубина", true)).Append(Th("Свободно на активных", true)).Append(Th("До заполнения", true)).Append(Th("Сверх срока", true))
+          .Append("</tr></thead><tbody>");
+        foreach (var p in Enumerable.Reverse(all).Take(30))
+            sb.Append("<tr>").Append(TdDate(p.ScannedAtUtc, withTime: true)).Append(TdN(Bytes(p.VideoBytes), p.VideoBytes))
+              .Append(TdN(Bytes((long)p.DailyBytes), p.DailyBytes)).Append(TdN(p.MaxDepthDays.ToString("0", Ru) + " дн.", p.MaxDepthDays))
+              .Append(TdN(Bytes(p.ActiveFreeBytes), p.ActiveFreeBytes)).Append(TdN(p.HeadroomDays is double hd ? hd.ToString("0", Ru) + " дн." : "—", p.HeadroomDays ?? -1))
+              .Append(TdN(p.OverRetention.ToString(Ru), p.OverRetention, p.OverRetention > 0 ? "bad" : null)).Append("</tr>");
+        sb.Append("</tbody></table></div></section>");
+
+        static string reports(ScanReport x) => string.IsNullOrEmpty(x.ServerName) ? "" : $" — {H(x.ServerName)}";
+    }
+
+    /// <summary>Small inline SVG line chart (no scripts, prints well).</summary>
+    private static void Spark(StringBuilder sb, string title, List<(DateTime T, double V)> pts, Func<double, string> fmt)
+    {
+        const int w = 420, h = 70, pad = 4;
+        double t0 = pts[0].T.Ticks, t1 = Math.Max(pts[^1].T.Ticks, t0 + 1);
+        double min = pts.Min(p => p.V), max = pts.Max(p => p.V);
+        if (max - min < 1e-9) { min -= 1; max += 1; }
+        string P((DateTime T, double V) p) =>
+            Inv(pad + (p.T.Ticks - t0) / (t1 - t0) * (w - 2 * pad)) + "," + Inv(h - pad - (p.V - min) / (max - min) * (h - 2 * pad));
+        sb.Append("<div class=\"spark\"><div class=\"label\">").Append(H(title)).Append(": <b>").Append(H(fmt(pts[^1].V))).Append("</b> <span class=\"muted\">(было ")
+          .Append(H(fmt(pts[0].V))).Append(")</span></div><svg viewBox=\"0 0 ").Append(w).Append(' ').Append(h).Append("\" role=\"img\" aria-label=\"").Append(H(title))
+          .Append("\"><polyline style=\"fill:none;stroke:var(--accent);stroke-width:2\" points=\"").Append(string.Join(" ", pts.Select(P))).Append("\"/>");
+        foreach (var p in pts) { var xy = P(p).Split(','); sb.Append("<circle r=\"2.5\" style=\"fill:var(--accent)\" cx=\"").Append(xy[0]).Append("\" cy=\"").Append(xy[1]).Append("\"/>"); }
+        sb.Append("</svg></div>");
+    }
+
     private static string Limits(DriveStat d)
     {
         var parts = new List<string>();
@@ -268,6 +311,7 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 .bar span{display:block;height:100%;background:var(--accent)}.bar span.full{background:var(--bad)}.warning{color:var(--warn);margin:6px 0}
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
 td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
+.spark{display:inline-block;vertical-align:top;margin:6px 18px 10px 0;width:420px;max-width:100%}.spark svg{width:100%;height:70px;display:block;background:var(--bg);border-radius:6px}.spark .label{font-size:12px;color:var(--muted);margin-bottom:4px}.spark .label b{color:var(--text)}
 tr.drv{cursor:pointer}tr.drv:hover,tr.drv.open{background:var(--bg)}tr.drv:focus{outline:2px solid var(--accent);outline-offset:-2px}
 tr.detail>td{padding:4px 10px 14px 28px;background:var(--bg);white-space:normal}
 table.days,table.dcams{width:auto;min-width:520px}table.days td,table.dcams td{padding:4px 10px}table.days th{cursor:default}
