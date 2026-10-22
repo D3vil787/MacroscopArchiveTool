@@ -4,7 +4,8 @@ Windows releases of MacroscopArchiveTool (`MacroscopArchiveTool.exe`, `mat.exe`)
 can check that a file comes from this project and has not been changed.
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-*(Status: application submitted; until it is approved, releases are unsigned.)*
+*(Status: the SignPath Foundation asked us to re-apply once the project has more public visibility. Until then releases are
+unsigned — verify downloads with the SHA-256 shown on the release page.)*
 
 ## What is signed and how
 
