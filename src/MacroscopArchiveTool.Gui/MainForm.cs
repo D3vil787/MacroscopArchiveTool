@@ -22,8 +22,8 @@ internal sealed class MainForm : Form
         Text = $"MacroscopArchiveTool {ToolInfo.Version}";
         Font = Ui.Base;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(760, 560);
-        Size = new Size(880, 640);
+        MinimumSize = new Size(980, 600);
+        Size = new Size(1100, 680);
         BackColor = Color.White;
 
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(24, 20, 24, 16) };
@@ -39,9 +39,8 @@ internal sealed class MainForm : Form
                                   "Программа не изменяет Macroscop: она работает с файлами архива и дисками Windows.", null, Ui.Muted, 800));
         root.Controls.Add(head, 0, 0);
 
-        var cards = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 0, 0, 16) };
-        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var cards = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true, Margin = new Padding(0, 0, 0, 16) };
+        for (int i = 0; i < 3; i++) cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
         cards.Controls.Add(Card("Отчёт по архиву",
             "Объём и глубина архива по дискам, дням и камерам, сроки хранения из настроек Macroscop, «тяжёлые» камеры. " +
             "Можно добавить другие серверы — получится сводный отчёт. Только чтение.",
@@ -50,6 +49,10 @@ internal sealed class MainForm : Form
             "Перенести архив с диска, который нужно убрать (например, с ошибками SMART), на другой том или в файл виртуального диска. " +
             "Записи остаются доступны, пока не истечёт срок хранения.",
             "Начать…", (_, _) => OpenWizard(null)), 1, 0);
+        cards.Controls.Add(Card("Очистка мусора",
+            "Старые резервные копии конфигурации, неиспользуемая версия PostgreSQL, старые журналы — на всех серверах. " +
+            "Сначала в карантин, вернуть можно.",
+            "Проверить…", (_, _) => RunCleanup()), 2, 0);
         root.Controls.Add(cards, 0, 1);
 
         var jobsBox = new GroupBox { Text = "Начатые выводы дисков", Dock = DockStyle.Fill, Font = Ui.Base, Padding = new Padding(10) };
@@ -105,7 +108,7 @@ internal sealed class MainForm : Form
             BackColor = Ui.PanelBack, Padding = new Padding(16), Margin = new Padding(0, 0, 12, 0),
         };
         p.Controls.Add(Ui.Text(title, Ui.Subtitle, Ui.Accent));
-        p.Controls.Add(Ui.Text(text, null, null, 360));
+        p.Controls.Add(Ui.Text(text, null, null, 300));
         var b = Ui.Button(button, onClick);
         b.Margin = new Padding(0, 6, 16, 0);
         if (link is { } l)
@@ -188,6 +191,16 @@ internal sealed class MainForm : Form
         _wizards.Add(w);
         w.FormClosed += (_, _) => { _wizards.Remove(w); w.Dispose(); RefreshJobs(); if (_exitWhenIdle) Close(); };
         w.Show();
+    }
+
+    private CleanupForm? _cleanup;
+
+    private void RunCleanup()
+    {
+        if (_cleanup is { IsDisposed: false }) { _cleanup.Activate(); return; }
+        _cleanup = new CleanupForm();
+        _cleanup.FormClosed += (_, _) => { _cleanup.Dispose(); _cleanup = null; };
+        _cleanup.Show();
     }
 
     private ReportForm? _report;

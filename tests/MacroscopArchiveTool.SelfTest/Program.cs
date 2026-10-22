@@ -23,6 +23,7 @@ var tests = new List<(string Name, Action Body)>
     ("Вывод диска: проверки и отмена ожидания Macroscop", RetirePrecheckAndCancel),
     ("Обновление: версия, ответ GitHub, проверка и замена файлов", UpdaterParseAndApply),
     ("Удалённый скан: копирование, запуск, журнал, отчёт, уборка", RemoteScanRoundTrip),
+    ("Очистка: правила категорий, карантин, восстановление, окончательное удаление", CleanupScanApplyRestorePurge),
 };
 
 int failed = 0;

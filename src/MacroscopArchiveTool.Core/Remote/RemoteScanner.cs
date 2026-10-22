@@ -32,6 +32,20 @@ public sealed class RemoteScanner
     public string ToolDir { get; set; } = AppContext.BaseDirectory;
 
     public ScanReport Run(IRemoteHost host, IProgress<string>? progress, CancellationToken ct)
+        => RunCommand(host, "scan --out \"{out}\" --no-html", Array.Empty<string>(), outDir =>
+        {
+            var json = Directory.Exists(outDir) ? Directory.GetFiles(outDir, "*.json").OrderBy(f => f).LastOrDefault() : null;
+            if (json == null) throw new FileNotFoundException("Скан завершился, но отчёт не найден.");
+            var report = ReportStore.LoadJson(json);
+            progress?.Report($"Готово: {report.Cameras.Count} камер, {report.Drives.Count} дисков");
+            return report;
+        }, progress, ct);
+
+    /// <summary>
+    /// Runs <c>mat.exe {args}</c> once on the server as SYSTEM. In <paramref name="args"/>, {out} is a fresh output folder and
+    /// {in} the folder with <paramref name="uploads"/>; <paramref name="read"/> gets the output folder (UNC) before it is removed.
+    /// </summary>
+    public T RunCommand<T>(IRemoteHost host, string args, IEnumerable<string> uploads, Func<string, T> read, IProgress<string>? progress, CancellationToken ct)
     {
         void Say(string m) => progress?.Report(m);
         Say("Подключение…");
@@ -49,13 +63,17 @@ public sealed class RemoteScanner
 
         var id = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         var outDir = Path.Combine(reports, id);
+        var inDir = Path.Combine(reports, id + "_in");
+        Directory.CreateDirectory(inDir);
+        foreach (var u in uploads) File.Copy(u, Path.Combine(inDir, Path.GetFileName(u)), overwrite: true);
+        var cmd = args.Replace("{out}", $"%~dp0reports\\{id}").Replace("{in}", $"%~dp0reports\\{id}_in");
         var log = Path.Combine(reports, id + ".log");
         var done = Path.Combine(reports, id + ".done");
         var bat = Path.Combine(dir, $"run_{id}.bat");
         File.WriteAllText(bat,
             "@echo off\r\n" +
             "cd /d \"%~dp0\"\r\n" +
-            $"mat.exe scan --out \"%~dp0reports\\{id}\" --no-html > \"%~dp0reports\\{id}.log\" 2>&1\r\n" +
+            $"mat.exe {cmd} > \"%~dp0reports\\{id}.log\" 2>&1\r\n" +
             $">\"%~dp0reports\\{id}.done\" echo %errorlevel%\r\n", Encoding.ASCII);
 
         bool started = false;
@@ -63,7 +81,7 @@ public sealed class RemoteScanner
         {
             host.RunTask(TaskName, $"{RemoteDir}\\run_{id}.bat");
             started = true;
-            Say("Сканирование запущено на сервере");
+            Say("Запущено на сервере");
 
             int shown = 0;
             while (!File.Exists(done))
@@ -76,18 +94,14 @@ public sealed class RemoteScanner
             Tail(log, shown, Say);
 
             var code = ReadShared(done).Trim();
-            if (code != "0") throw new InvalidOperationException($"Скан на сервере завершился с кодом {code}. Последние строки журнала: {LastLines(log, 5)}");
-            var json = Directory.Exists(outDir) ? Directory.GetFiles(outDir, "*.json").OrderBy(f => f).LastOrDefault() : null;
-            if (json == null) throw new FileNotFoundException("Скан завершился, но отчёт не найден.");
-            var report = ReportStore.LoadJson(json);
-            Say($"Готово: {report.Cameras.Count} камер, {report.Drives.Count} дисков");
-            return report;
+            if (code != "0") throw new InvalidOperationException($"Команда на сервере завершилась с кодом {code}. Последние строки журнала: {LastLines(log, 5)}");
+            return read(outDir);
         }
         finally
         {
             if (started) { try { host.DeleteTask(TaskName); } catch (Exception) { } }
             foreach (var p in new[] { bat, done, log }) { try { File.Delete(p); } catch (Exception) { } }
-            try { if (Directory.Exists(outDir)) Directory.Delete(outDir, true); } catch (Exception) { }
+            foreach (var d in new[] { outDir, inDir }) { try { if (Directory.Exists(d)) Directory.Delete(d, true); } catch (Exception) { } }
         }
     }
 

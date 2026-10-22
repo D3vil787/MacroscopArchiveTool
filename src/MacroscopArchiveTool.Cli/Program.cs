@@ -22,6 +22,7 @@ internal static class Program
                 "merge" => Merge(new Args(args.Skip(1))),
                 "init-config" => InitConfig(new Args(args.Skip(1))),
                 "dump-config" => DumpConfig(new Args(args.Skip(1))),
+                "cleanup" => Cleanup(new Args(args.Skip(1))),
                 "schedule" => Schedule(new Args(args.Skip(1))),
                 "unschedule" => Unschedule(),
                 "version" or "--version" => Print(ToolInfo.Version),
@@ -115,6 +116,40 @@ internal static class Program
         Console.WriteLine(text.Length > 3000 ? text[..3000] + "\n…" : text);
         Console.WriteLine($"Полный вывод: {output}");
         Console.WriteLine("В выводе нет строковых значений, кроме имён камер, — логины и пароли камер в него не попадают.");
+        return 0;
+    }
+
+    // cleanup scan|apply|restore|purge [--plan FILE] [--out FILE] [--backup-days N] [--keep N] [--log-days N] [--set ID] [--older-than N]
+    private static int Cleanup(Args a)
+    {
+        if (!OperatingSystem.IsWindows()) return Fail("Очистка доступна только в Windows.");
+        var command = a.Positional.FirstOrDefault()?.ToLowerInvariant() ?? "scan";
+        if (!MacroscopArchiveTool.Core.Cleanup.CleanupCommands.Names.Contains(command)) return Fail("cleanup scan|apply|restore|purge");
+        var plan = a.Get("--plan") is { } pf
+            ? System.Text.Json.JsonSerializer.Deserialize<MacroscopArchiveTool.Core.Cleanup.CleanupPlan>(File.ReadAllText(pf), MacroscopArchiveTool.Core.Cleanup.CleanupCommands.Json)!
+            : new MacroscopArchiveTool.Core.Cleanup.CleanupPlan();
+        if (a.Get("--backup-days") is { } bd) plan.Options.BackupDays = int.Parse(bd);
+        if (a.Get("--keep") is { } k) plan.Options.BackupsToKeep = int.Parse(k);
+        if (a.Get("--log-days") is { } ld) plan.Options.LogDays = int.Parse(ld);
+        if (a.Get("--set") is { } set) plan.SetId = set;
+        if (a.Get("--older-than") is { } ot) plan.OlderThanDays = int.Parse(ot);
+        if (command == "apply" && plan.ItemIds.Count == 0) return Fail("Для apply нужен --plan с выбранными пунктами (его готовит окно программы).");
+
+        var progress = new Progress<string>(m => Console.WriteLine("  " + m));
+        var result = new MacroscopArchiveTool.Core.Cleanup.LocalCleanupTarget().Run(command, plan, progress, CancellationToken.None);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, MacroscopArchiveTool.Core.Cleanup.CleanupCommands.Json);
+        if (a.Get("--out") is { } outFile)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
+            File.WriteAllText(outFile, json);
+        }
+        else
+        {
+            foreach (var i in result.Items)
+                Console.WriteLine($"{(i.Action == MacroscopArchiveTool.Core.Cleanup.CleanupAction.ShowOnly ? "  (просмотр)" : $"  [{i.Id}]")} {MacroscopArchiveTool.Core.Cleanup.CleanupText.Category(i.Category)}: {i.Title} — {HtmlReport.Bytes(i.Bytes)}");
+            foreach (var q in result.Quarantine) Console.WriteLine($"  карантин {q.SetId}: {Path.GetPathRoot(q.Folder)} {HtmlReport.Bytes(q.Bytes)}");
+        }
+        foreach (var w in result.Warnings) Console.WriteLine("  ! " + w);
         return 0;
     }
 
@@ -212,6 +247,10 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
   init-config   Создать mat.json с настройками сроков хранения
   dump-config   Показать структуру конфигурации Macroscop и распознанные сроки камер (без паролей)
                   [--file FILE] [--out FILE] [--tree]   (--tree: всё дерево файла, напр. Server.SrvConf)
+  cleanup       Очистка мусора Macroscop через карантин (удобнее — кнопкой в окне программы)
+                  cleanup scan [--backup-days 30] [--keep 10] [--log-days 90]   что можно удалить
+                  cleanup apply --plan FILE                                    перенести выбранное в карантин
+                  cleanup restore --set ID | cleanup purge --set ID|--older-than N
   schedule      Еженедельный скан через Планировщик Windows (от администратора)
                   [--day MON] [--time 06:00]
   unschedule    Удалить еженедельный скан
