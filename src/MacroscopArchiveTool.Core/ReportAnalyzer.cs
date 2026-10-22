@@ -31,6 +31,7 @@ public static class ReportAnalyzer
             c.IsHeavy = median > 0 && c.DepthDays >= 1 && c.BytesPerDay >= heavyFactor * median;
 
         report.Cameras = report.Cameras.OrderByDescending(c => c.BytesPerDay).ToList();
+        foreach (var c in report.Cameras) Classify(report, c, now);
 
         // Disks that no longer receive video (reserve, unused, or simply idle): when does the last recording expire?
         var retention = report.Cameras.ToDictionary(c => c.Id, c => c.RetentionDays ?? report.DefaultRetentionDays, StringComparer.OrdinalIgnoreCase);
@@ -51,6 +52,24 @@ public static class ReportAnalyzer
             d.DrainForecastUtc = last;
         }
     }
+
+    /// <summary>Lost-camera checks: removed from the configuration, switched off, not recording, nothing recorded at all.</summary>
+    private static void Classify(ScanReport r, CameraStat c, DateTime now)
+    {
+        c.SilentDays = c.NewestUtc is DateTime n ? Math.Max(0, (now - n).TotalDays) : null;
+        c.ArchiveUntilUtc = c.NewestUtc is DateTime nn && c.RetentionDays is > 0 ? nn.AddDays(c.RetentionDays.Value) : null;
+        var limit = c.Settings?.ArchiveMode == 2 ? r.SilentDaysContinuous : r.SilentDaysMotion;
+        c.LostKind =
+            c.InConfig == false ? "deleted" :
+            c.Settings?.Disabled == true ? "disabled" :
+            c.Settings?.ArchiveEnabled == false ? "recording-off" :
+            c.Bytes == 0 && c.BoundHere == true ? "no-archive" :
+            c.SilentDays > limit ? (c.BoundHere == false && c.InConfig == true ? "moved" : "silent") :
+            null;
+    }
+
+    /// <summary>Kinds that mean "a camera occupies a licence or disk space for nothing" — shown and alarmed.</summary>
+    public static bool IsProblem(string? kind) => kind is "silent" or "no-archive" or "deleted" or "disabled";
 
     public static double Median(IReadOnlyList<double> sorted)
     {

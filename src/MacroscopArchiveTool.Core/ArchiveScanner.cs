@@ -94,9 +94,21 @@ public sealed class ArchiveScanner
             }
         }
 
+        report.ConfigRead = macroscopRetention is { ById.Count: > 0 };
+        report.BindingsRead = names.ServerId != null && names.ServerOf.Count > 0;
+        report.SilentDaysContinuous = config.SilentDaysContinuous;
+        report.SilentDaysMotion = config.SilentDaysMotion;
+        // Cameras bound to this server that have no recordings at all are "lost" too: add them with zero volume.
+        if (report.BindingsRead)
+            foreach (var id in names.ServerOf.Keys.Where(names.IsBoundHere))
+                if (!cameras.ContainsKey(id)) cameras[id] = new CameraStat { Id = id };
         foreach (var c in cameras.Values)
         {
-            c.Name = names.Get(c.Id) ?? macroscopRetention?.ById.GetValueOrDefault(c.Id)?.Name ?? CameraNames.ToDashedGuid(c.Id) ?? c.Id;
+            c.Name = names.Get(c.Id) ?? macroscopRetention?.ById.GetValueOrDefault(c.Id)?.Name
+                     ?? (names.Historical.TryGetValue(c.Id, out var old) ? old + " (удалена)" : null)
+                     ?? CameraNames.ToDashedGuid(c.Id) ?? c.Id;
+            if (report.ConfigRead) c.InConfig = macroscopRetention!.ById.ContainsKey(c.Id);
+            if (report.BindingsRead) c.BoundHere = names.IsBoundHere(c.Id);
             ApplyRetention(c, config, macroscopRetention);
         }
         if (macroscopRetention != null) ApplyDriveConfig(report.Drives, macroscopRetention.Drives);

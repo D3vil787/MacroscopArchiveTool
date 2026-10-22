@@ -10,6 +10,13 @@ public sealed class ScanReport
     public double ScanSeconds { get; set; }
     public int DefaultRetentionDays { get; set; }
     public double HeavyFactor { get; set; }
+    /// <summary>Camera list of the Macroscop configuration was read (so "not in configuration" is meaningful).</summary>
+    public bool ConfigRead { get; set; }
+    /// <summary>Channel-to-server bindings were read from ServerConfiguration.log.</summary>
+    public bool BindingsRead { get; set; }
+    /// <summary>Days without new recordings after which a camera counts as silent (continuous / motion recording).</summary>
+    public double SilentDaysContinuous { get; set; } = 1;
+    public double SilentDaysMotion { get; set; } = 7;
     /// <summary>Where camera retention came from, e.g. "конфигурация Macroscop (копия от …)".</summary>
     public string RetentionSource { get; set; } = "";
     public List<DriveStat> Drives { get; set; } = new();
@@ -89,4 +96,19 @@ public sealed class CameraStat
     public double SharePercent { get; set; }
     public bool IsHeavy { get; set; }
     public bool ExceedsRetention { get; set; }
+
+    /// <summary>In the Macroscop camera list (null = unknown).</summary>
+    public bool? InConfig { get; set; }
+    /// <summary>Bound to the scanned server (null = unknown).</summary>
+    public bool? BoundHere { get; set; }
+    /// <summary>Days since the last recording (null when there is none).</summary>
+    public double? SilentDays { get; set; }
+    /// <summary>When the newest recording expires by retention.</summary>
+    public DateTime? ArchiveUntilUtc { get; set; }
+    /// <summary>
+    /// Why the camera looks lost: "silent" (stopped recording), "no-archive" (nothing recorded within retention),
+    /// "deleted" (removed from the configuration, archive left), "disabled" (switched off in Macroscop),
+    /// "moved" (bound to another server now), "recording-off" (archive recording disabled); null = fine.
+    /// </summary>
+    public string? LostKind { get; set; }
 }

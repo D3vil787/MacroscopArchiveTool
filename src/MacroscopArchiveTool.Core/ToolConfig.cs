@@ -27,6 +27,11 @@ public sealed class ToolConfig
     /// <summary>How many drives are scanned in parallel.</summary>
     public int ScanThreads { get; set; } = 4;
 
+    /// <summary>A continuously recording camera without new recordings for this many days is reported as silent.</summary>
+    public double SilentDaysContinuous { get; set; } = 1;
+    /// <summary>The same for motion recording (a quiet scene may really have no motion for a while).</summary>
+    public double SilentDaysMotion { get; set; } = 7;
+
     /// <summary>Look for a new version on GitHub when the window opens.</summary>
     public bool CheckUpdates { get; set; } = true;
 

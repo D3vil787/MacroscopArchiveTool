@@ -183,7 +183,7 @@ zabbix_export:
         expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_over_retention)>0'
         name: 'Macroscop: {ITEM.LASTVALUE} cameras keep recordings longer than their retention'
         priority: INFO
-        description: See the "Камеры" table of the MacroscopArchiveTool report.
+        description: 'See the "Камеры" table of the MacroscopArchiveTool report.'
     - uuid: bfc6273c01dd4b4aa236ca54f0054209
       name: 'Macroscop: heavy cameras'
       type: DEPENDENT
@@ -211,6 +211,112 @@ zabbix_export:
       - type: JSONPATH
         parameters:
         - '$.warnings'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: 8502d9c243d44d369bdec4821a256c16
+      name: 'Macroscop: lost cameras (list)'
+      type: DEPENDENT
+      key: macroscop.cameras_lost_list
+      delay: '0'
+      history: 30d
+      value_type: TEXT
+      trends: '0'
+      description: 'Cameras without recordings within retention, not recording, or switched off.'
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_lost_list'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+    - uuid: 29920ac99ef04bcb9bc593aed263197c
+      name: 'Macroscop: cameras without any recording within retention'
+      type: DEPENDENT
+      key: macroscop.cameras_no_archive
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      description: 'Bound to the server, but nothing recorded during the whole retention period: most likely removed or replaced; it still occupies a licence.'
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_no_archive'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: ed0363695e9145b4a7503599fda8fade
+        expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_no_archive)>0 and length(last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_lost_list))>=0'
+        name: 'Macroscop: {ITEM.LASTVALUE1} cameras have no recordings within retention (licence used for nothing)'
+        opdata: '{ITEM.LASTVALUE2}'
+        priority: WARNING
+        description: 'Delete removed or replaced cameras in the Macroscop Configurator. Details: "Потерянные камеры" in the MacroscopArchiveTool report.'
+    - uuid: fd444262fa4c48e1b56b0d2f95ebd3d7
+      name: 'Macroscop: cameras that stopped recording'
+      type: DEPENDENT
+      key: macroscop.cameras_silent
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      description: No new recordings for longer than silentDaysContinuous / silentDaysMotion (mat.json).
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_silent'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: c34dc4a62a884eeb8b427a2a12755645
+        expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_silent)>0 and length(last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_lost_list))>=0'
+        name: 'Macroscop: {ITEM.LASTVALUE1} cameras stopped recording'
+        opdata: '{ITEM.LASTVALUE2}'
+        priority: WARNING
+        description: 'Check the cameras and the network. If a camera was removed, its archive stays until retention expires; then delete it from the Configurator.'
+    - uuid: 3ec454a59e1d4ff7b0bbf05483e2d8fa
+      name: 'Macroscop: cameras switched off in Macroscop'
+      type: DEPENDENT
+      key: macroscop.cameras_disabled
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_disabled'
+      master_item:
+        key: macroscop.metrics
+      tags:
+      - tag: component
+        value: macroscop
+      triggers:
+      - uuid: 79fb8ff416224c0bbd008773ab5ed9ac
+        expression: 'last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_disabled)>0 and length(last(/Macroscop Archive by MacroscopArchiveTool/macroscop.cameras_lost_list))>=0'
+        name: 'Macroscop: {ITEM.LASTVALUE1} cameras are switched off in Macroscop'
+        opdata: '{ITEM.LASTVALUE2}'
+        priority: INFO
+        description: Switched-off cameras still occupy licences. Delete them once their archive is no longer needed.
+    - uuid: 4f78b66503ab4ea0b66b48e1c5996556
+      name: 'Macroscop: removed cameras with archive left'
+      type: DEPENDENT
+      key: macroscop.cameras_deleted
+      delay: '0'
+      history: 90d
+      value_type: UNSIGNED
+      description: Cameras no longer in the configuration whose recordings are still on the disks (should expire by retention).
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - '$.cameras_deleted'
       master_item:
         key: macroscop.metrics
       tags:

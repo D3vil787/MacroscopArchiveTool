@@ -33,6 +33,8 @@ public sealed class CameraSettings
     public double? Fps { get; set; }
     public bool? UsesCameraResolution { get; set; }
     public int? ResolutionCode { get; set; }
+    /// <summary>"Камера активна" switched off in the Configurator.</summary>
+    public bool? Disabled { get; set; }
 }
 
 /// <summary>One archive disk as configured in Macroscop (Configurator → Archive), from Server.SrvConf.</summary>
@@ -276,6 +278,7 @@ public static class MacroscopConfig
             Fps = ToDouble(M("liveFrameRate")),
             UsesCameraResolution = B("isUsingCamResolutionSetting"),
             ResolutionCode = E("videoResolution"),
+            Disabled = B("isDisabled"),
         };
     }
 

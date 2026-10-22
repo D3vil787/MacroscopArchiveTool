@@ -10,7 +10,7 @@ namespace MacroscopArchiveTool.Core;
 public sealed class CameraNames
 {
     private static readonly Regex ChannelLine = new(
-        @"channelId:\s*(?<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\((?<name>.*?)\),\s*serverId",
+        @"channelId:\s*(?<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\((?<name>.*?)\),\s*serverId:\s*(?<server>[0-9a-fA-F-]{36})?",
         RegexOptions.Compiled);
 
     private static readonly Regex ServerLine = new(
@@ -18,6 +18,13 @@ public sealed class CameraNames
         RegexOptions.Compiled | RegexOptions.Multiline);
 
     public Dictionary<string, string> ById { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Server each channel is bound to (normalized ids), from the same log lines.</summary>
+    public Dictionary<string, string> ServerOf { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Names from older logs too (ServerConfiguration.log of every session), for cameras deleted since.</summary>
+    public Dictionary<string, string> Historical { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>True when the channel is bound to this server according to the newest log.</summary>
+    public bool IsBoundHere(string id) => ServerId != null && ServerOf.TryGetValue(Normalize(id), out var s) && s == Normalize(ServerId);
     public string? ServerName { get; private set; }
     public string? ServerId { get; private set; }
     public string? SourceFile { get; private set; }
@@ -45,13 +52,26 @@ public sealed class CameraNames
 
         result.SourceFile = newest.FullName;
         result.Parse(ReadShared(newest.FullName));
+
+        // Older sessions remember cameras that were deleted later; newest name wins.
+        foreach (var f in new DirectoryInfo(logsDir)
+                     .EnumerateFiles("ServerConfiguration.log", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true })
+                     .OrderBy(f => f.LastWriteTimeUtc))
+        {
+            try { foreach (Match m in ChannelLine.Matches(ReadShared(f.FullName))) result.Historical[Normalize(m.Groups["id"].Value)] = m.Groups["name"].Value.Trim(); }
+            catch (Exception) { /* locked or unreadable: skip */ }
+        }
         return result;
     }
 
     public void Parse(string text)
     {
         foreach (Match m in ChannelLine.Matches(text))
-            ById[Normalize(m.Groups["id"].Value)] = m.Groups["name"].Value.Trim();
+        {
+            var id = Normalize(m.Groups["id"].Value);
+            ById[id] = m.Groups["name"].Value.Trim();
+            if (m.Groups["server"].Success) ServerOf[id] = Normalize(m.Groups["server"].Value);
+        }
 
         var s = ServerLine.Match(text);
         if (s.Success)

@@ -25,6 +25,7 @@ var tests = new List<(string Name, Action Body)>
     ("Удалённый скан: копирование, запуск, журнал, отчёт, уборка", RemoteScanRoundTrip),
     ("Очистка: правила категорий, карантин, восстановление, окончательное удаление", CleanupScanApplyRestorePurge),
     ("Роли дисков из Server.SrvConf и прогноз опустения", DriveRolesAndDrainForecast),
+    ("Потерянные камеры: не пишет, нет архива, удалена, отключена, на другом сервере", LostCameraKinds),
 };
 
 int failed = 0;
@@ -70,7 +71,11 @@ static void ScanFakeArchive()
     var r = fx.Scan();
 
     Eq(2, r.Drives.Count, "дисков");
-    Eq(3, r.Cameras.Count, "камер");
+    Eq(4, r.Cameras.Count, "камер: 3 с архивом + 1 привязанная к серверу без единой записи");
+    var parking = r.Cameras.Single(c => c.Name.StartsWith("Парковка 2"));
+    Eq(0L, parking.Bytes, "у камеры без записей нет объёма");
+    Eq("no-archive", parking.LostKind, "камера без записей за весь срок — потерянная");
+    True(HtmlReport.Render(new[] { r }).Contains("Потерянные камеры"), "раздел потерянных камер");
     Eq("Cервер 1", r.ServerName, "сервер");
 
     var heavy = r.Cameras.Single(c => c.Name == "Склад 1");
@@ -167,7 +172,7 @@ static void NrbfRetention()
     Eq(7, s.PostRecordSec ?? 0, "постзапись");
     Eq(false, s.UsesCameraFps ?? true, "свой fps");
     Eq(15.0, s.Fps ?? 0, "fps из Macroscop");
-    Eq("постоянно · альтернативный поток · кодек 2 · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
+    Eq("постоянно · альтернативный поток · MPEG-4 Part 2 · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
     var tree = MacroscopConfig.DumpTree(WriteTemp(FakeMacroscopConfig.Build(90, 14)));
     True(tree.Contains("== Корневой объект ==") && tree.Contains("secChannels"), "дерево файла конфигурации");
     True(!tree.Contains(FakeMacroscopConfig.Secret), "пароль не попал в дерево");

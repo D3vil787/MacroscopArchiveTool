@@ -28,4 +28,9 @@ disk discovery and triggers. Works with Zabbix agent and agent 2, Zabbix server 
 | Free space on active disks, days until full | fewer than `{$MACROSCOP.HEADROOM.MIN}` (14) days |
 | Cameras over retention | more than 0 (info) |
 | Heavy cameras, scan warnings | — |
+| Lost cameras (list) | — (shown as operational data of the triggers below) |
+| Cameras without any recording within retention | more than 0: removed/replaced camera still uses a licence |
+| Cameras that stopped recording | more than 0 |
+| Cameras switched off in Macroscop | more than 0 (info) |
+| Removed cameras with archive left | — |
 | Per disk (discovery): used %, free, video, last recording, empties-by date | archive disk received no recordings during the last day |

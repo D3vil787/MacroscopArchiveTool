@@ -29,6 +29,7 @@ public static class HtmlReport
             RenderServer(sb, reports[i], reports.Count > 1, i);
             if (history != null && history.TryGetValue(reports[i].MachineName, out var h)) RenderHistory(sb, reports[i], h);
         }
+        RenderLost(sb, reports);
         RenderCameras(sb, reports);
         RenderNotes(sb);
 
@@ -68,6 +69,8 @@ public static class HtmlReport
              sizesKnown && headroom.HasValue ? $"≈ {headroom.Value.ToString("0", Ru)} дн. до заполнения" : null);
         Card(sb, "Тяжёлые камеры", heavy.ToString(Ru), heavy > 0 ? $"пишут в {r.HeavyFactor.ToString("0.#", Ru)} раза больше медианы" : null, heavy > 0 ? "warn" : null);
         Card(sb, "Сверх срока хранения", over.ToString(Ru), over > 0 ? "есть записи старше лимита" : "нарушений нет", over > 0 ? "bad" : "ok");
+        var lost = r.Cameras.Count(c => ReportAnalyzer.IsProblem(c.LostKind));
+        Card(sb, "Камеры без записи", lost.ToString(Ru), lost > 0 ? "см. раздел «Потерянные камеры»" : "все пишут", lost > 0 ? "warn" : "ok");
         sb.Append("</div>");
 
         if (!string.IsNullOrEmpty(r.RetentionSource))
@@ -159,6 +162,7 @@ public static class HtmlReport
             var flags = new List<string>();
             if (c.IsHeavy) flags.Add("<span class=\"tag warn\">тяжёлая</span>");
             if (c.ExceedsRetention) flags.Add("<span class=\"tag bad\">сверх срока</span>");
+            if (ReportAnalyzer.IsProblem(c.LostKind)) flags.Add($"<span class=\"tag warn\">{H(LostShort(c.LostKind))}</span>");
             sb.Append("<tr").Append(c.ExceedsRetention ? " class=\"rowbad\"" : c.IsHeavy ? " class=\"rowwarn\"" : "").Append(">")
               .Append(Td(c.Name, cls: "strong", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
             if (multi) sb.Append(Td(r.ServerName));
@@ -173,6 +177,52 @@ public static class HtmlReport
               .Append(TdDate(c.OldestUtc))
               .Append(TdN(c.BytesByDrive.Count > 0 ? c.BytesByDrive.Count.ToString(Ru) : "—", c.BytesByDrive.Count))
               .Append("<td>").Append(string.Join(" ", flags)).Append("</td></tr>");
+        }
+        sb.Append("</tbody></table></div></section>");
+    }
+
+    private static string LostShort(string? kind) => kind switch
+    {
+        "silent" => "не пишет", "no-archive" => "нет архива", "deleted" => "удалена", "disabled" => "отключена",
+        "moved" => "на другом сервере", "recording-off" => "запись выключена", _ => "",
+    };
+
+    /// <summary>Cameras that occupy a licence or disk space for nothing, with what to do about each.</summary>
+    private static void RenderLost(StringBuilder sb, IReadOnlyList<ScanReport> reports)
+    {
+        var rows = reports.SelectMany(r => r.Cameras.Where(c => c.LostKind != null).Select(c => (r, c)))
+            .OrderBy(x => x.c.LostKind switch { "no-archive" => 0, "silent" => 1, "disabled" => 2, "deleted" => 3, "moved" => 4, _ => 5 })
+            .ThenByDescending(x => x.c.SilentDays ?? double.MaxValue).ToList();
+        bool multi = reports.Count > 1;
+        sb.Append("<section><h2>Потерянные камеры</h2>");
+        if (rows.Count == 0) { sb.Append("<p class=\"ok\">Все камеры этого отчёта пишут в архив.</p></section>"); return; }
+        sb.Append("<p class=\"muted\">Камеры, которые не пишут или от которых остался только архив. Камера, у которой за весь срок хранения нет ни одной записи, ")
+          .Append("скорее всего снята или заменена — её стоит удалить из Конфигуратора, чтобы освободить лицензию. Порог «не пишет»: ")
+          .Append(reports[0].SilentDaysContinuous.ToString("0.#", Ru)).Append(" дн. при постоянной записи, ")
+          .Append(reports[0].SilentDaysMotion.ToString("0.#", Ru)).Append(" дн. при записи по движению (mat.json: silentDaysContinuous, silentDaysMotion).</p>")
+          .Append("<div class=\"scroll\"><table class=\"sortable\"><thead><tr>").Append(Th("Камера"));
+        if (multi) sb.Append(Th("Сервер"));
+        sb.Append(Th("Что с ней")).Append(Th("Последняя запись", true)).Append(Th("Без записи", true)).Append(Th("Архив хранится до", true))
+          .Append(Th("Объём", true)).Append(Th("Что делать")).Append("</tr></thead><tbody>");
+        foreach (var (r, c) in rows)
+        {
+            var until = c.ArchiveUntilUtc is DateTime u ? u.ToLocalTime().ToString("dd.MM.yyyy", Ru) : "—";
+            var (what, todo) = c.LostKind switch
+            {
+                "no-archive" => ("за весь срок хранения нет ни одной записи", "Камера не пишет дольше срока хранения. Если её сняли или заменили — удалите из Конфигуратора, освободится лицензия."),
+                "silent" => ($"не пишет {c.SilentDays?.ToString("0", Ru)} дн.", $"Проверьте камеру и сеть. Если её сняли — архив можно смотреть до {until}, после этого удалите камеру из Конфигуратора."),
+                "disabled" => ("отключена в Macroscop («Камера активна» выкл.)", c.Bytes > 0 ? $"Архив хранится до {until}; после этого камеру можно удалить из Конфигуратора." : "Архива нет — если камера не нужна, удалите её из Конфигуратора."),
+                "deleted" => ("удалена из конфигурации, остался архив", $"Лицензию не занимает. Архив должен удалиться по сроку хранения до {until} — если он остаётся дольше, его можно убрать вручную."),
+                "moved" => ("привязана к другому серверу", "Здесь остался её прежний архив; он удалится по сроку хранения."),
+                _ => ("запись в архив выключена", "Только живое видео. Если камера не нужна — удалите её из Конфигуратора."),
+            };
+            var cls = c.LostKind is "no-archive" or "silent" ? " class=\"rowwarn\"" : "";
+            sb.Append("<tr").Append(cls).Append('>').Append(Td(c.Name, cls: "strong", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
+            if (multi) sb.Append(Td(r.ServerName));
+            sb.Append(Td(what)).Append(TdDate(c.NewestUtc, withTime: true))
+              .Append(TdN(c.SilentDays is double sd ? sd.ToString("0", Ru) + " дн." : "—", c.SilentDays ?? 99999))
+              .Append(c.ArchiveUntilUtc is DateTime uu ? TdDate(uu) : TdN("—", 0)).Append(TdN(Bytes(c.Bytes), c.Bytes))
+              .Append("<td class=\"small\" style=\"white-space:normal;min-width:260px\">").Append(H(todo)).Append("</td></tr>");
         }
         sb.Append("</tbody></table></div></section>");
     }

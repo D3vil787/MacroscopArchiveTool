@@ -12,8 +12,8 @@ public static class SettingNames
     public static readonly Dictionary<int, string> ArchiveModes = new() { [1] = "по движению", [2] = "постоянно" };
     /// <summary>Alarus.StreamTypes (stream written to the archive).</summary>
     public static readonly Dictionary<int, string> StreamTypes = new() { [0] = "основной поток", [1] = "альтернативный поток" };
-    /// <summary>Alarus.Config.VideoStreamFormats (3 and 4 confirmed on Macroscop 4.7 against camera settings).</summary>
-    public static readonly Dictionary<int, string> StreamFormats = new() { [3] = "H.264", [4] = "H.265" };
+    /// <summary>Alarus.Config.VideoStreamFormats (2, 3 and 4 confirmed on Macroscop 4.7 against camera settings).</summary>
+    public static readonly Dictionary<int, string> StreamFormats = new() { [2] = "MPEG-4 Part 2", [3] = "H.264", [4] = "H.265" };
 
     private static string Code(Dictionary<int, string> map, int? code, string prefix)
         => code is int c ? map.GetValueOrDefault(c, $"{prefix} {c}") : $"{prefix} ?";

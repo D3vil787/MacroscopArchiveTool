@@ -62,6 +62,14 @@ public static class MetricsWriter
             cameras = p.Cameras,
             cameras_over_retention = p.OverRetention,
             cameras_heavy = r.Cameras.Count(c => c.IsHeavy),
+            // Lost cameras: nothing recorded within retention / stopped recording / switched off / removed with archive left.
+            cameras_no_archive = r.Cameras.Count(c => c.LostKind == "no-archive"),
+            cameras_silent = r.Cameras.Count(c => c.LostKind == "silent"),
+            cameras_disabled = r.Cameras.Count(c => c.LostKind == "disabled"),
+            cameras_deleted = r.Cameras.Count(c => c.LostKind == "deleted"),
+            cameras_lost_list = string.Join("; ", r.Cameras.Where(c => c.LostKind is "no-archive" or "silent" or "disabled")
+                .OrderByDescending(c => c.SilentDays ?? double.MaxValue)
+                .Select(c => c.LostKind == "no-archive" ? $"{c.Name} (нет архива)" : c.LostKind == "disabled" ? $"{c.Name} (отключена)" : $"{c.Name} ({c.SilentDays:0} дн.)")),
             warnings = r.Warnings.Count,
             drives = r.Drives.Select(d => new
             {
