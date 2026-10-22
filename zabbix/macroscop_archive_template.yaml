@@ -225,7 +225,7 @@ zabbix_export:
       lifetime: 30d
       item_prototypes:
       - uuid: 0ab91023ad6e47d09c4d40568bf9c40e
-        name: 'Disk {#DRIVE}: used'
+        name: 'Disk {#DRIVE} used'
         type: DEPENDENT
         key: 'macroscop.drive.used_pct[{#DRIVE}]'
         delay: '0'
@@ -241,7 +241,7 @@ zabbix_export:
         - tag: disk
           value: '{#DRIVE}'
       - uuid: 36ea987290594000a46d1b743b56bfe2
-        name: 'Disk {#DRIVE}: free'
+        name: 'Disk {#DRIVE} free'
         type: DEPENDENT
         key: 'macroscop.drive.free_bytes[{#DRIVE}]'
         delay: '0'
@@ -257,7 +257,7 @@ zabbix_export:
         - tag: disk
           value: '{#DRIVE}'
       - uuid: b3a33cdf09f2417a98ea9efc9fbce762
-        name: 'Disk {#DRIVE}: video'
+        name: 'Disk {#DRIVE} video'
         type: DEPENDENT
         key: 'macroscop.drive.video_bytes[{#DRIVE}]'
         delay: '0'
@@ -273,7 +273,7 @@ zabbix_export:
         - tag: disk
           value: '{#DRIVE}'
       - uuid: c91c303357a841f88637375db0923264
-        name: 'Disk {#DRIVE}: last recording'
+        name: 'Disk {#DRIVE} last recording'
         type: DEPENDENT
         key: 'macroscop.drive.last_write[{#DRIVE}]'
         delay: '0'
@@ -289,7 +289,7 @@ zabbix_export:
         - tag: disk
           value: '{#DRIVE}'
       - uuid: 9d2da577aa254a7d8e3da30dcefbdedd
-        name: 'Disk {#DRIVE}: recorded during the last day'
+        name: 'Disk {#DRIVE} recorded during the last day'
         type: DEPENDENT
         key: 'macroscop.drive.active[{#DRIVE}]'
         delay: '0'
@@ -304,7 +304,7 @@ zabbix_export:
         - tag: disk
           value: '{#DRIVE}'
       - uuid: 6bc73179a6414ea1a5f32ec41efac2d0
-        name: 'Disk {#DRIVE}: expected to be recording'
+        name: 'Disk {#DRIVE} expected to be recording'
         type: DEPENDENT
         key: 'macroscop.drive.expected[{#DRIVE}]'
         delay: '0'
@@ -319,7 +319,7 @@ zabbix_export:
         - tag: disk
           value: '{#DRIVE}'
       - uuid: cce376c2978649c78091cba39b109e37
-        name: 'Disk {#DRIVE}: empties by retention on'
+        name: 'Disk {#DRIVE} empties by retention on'
         type: DEPENDENT
         key: 'macroscop.drive.drain[{#DRIVE}]'
         delay: '0'
