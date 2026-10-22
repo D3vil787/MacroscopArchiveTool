@@ -1,0 +1,30 @@
+name: cleanup-releases
+
+# One-off maintenance after the history rewrite: old tags still point at pre-rewrite commits,
+# so every release and tag except the current version is removed. Runs when this file changes.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/cleanup-releases.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete old releases and tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current="v$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)"
+          echo "Keeping $current"
+          for tag in $(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name'); do
+            [ "$tag" = "$current" ] && continue
+            echo "Removing $tag"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || \
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" || true
+          done
