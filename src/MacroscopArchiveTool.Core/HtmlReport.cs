@@ -104,8 +104,10 @@ public static class HtmlReport
               .Append(TdDate(d.OldestUtc)).Append(TdDate(d.NewestUtc, withTime: true))
               .Append(d.IsActive ? Td("пишется", cls: "ok")
                       : d.MediaBytes == 0 ? Td("без видео", cls: "muted")
-                      : Td("без записи > 24 ч" + (d.DrainForecastUtc is DateTime f ? $", опустеет ≈ {f.ToLocalTime().ToString("dd.MM.yyyy", Ru)}" : ""), cls: "muted",
-                           title: d.DrainForecastUtc != null ? "Когда истечёт срок хранения последней записи на диске (по срокам камер). Новые записи на диск не попадают, если его роль — резервный архив или «Не используется»." : null))
+                      : d.DrainForecastUtc is DateTime f
+                          ? "<td class=\"muted status2\" title=\"Когда истечёт срок хранения последней записи на диске (по срокам камер). Новые записи на диск не попадают, если его роль — резервный архив или «Не используется».\">без записи &gt; 24 ч<br>опустеет ≈ <b>" +
+                            H(f.ToLocalTime().ToString("dd.MM.yyyy", Ru)) + "</b></td>"
+                          : Td("без записи > 24 ч", cls: "muted"))
               .Append("</tr>");
         }
         sb.Append("</tbody></table></div>");
@@ -312,6 +314,7 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
 td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
 .spark{display:inline-block;vertical-align:top;margin:6px 18px 10px 0;width:420px;max-width:100%}.spark svg{width:100%;height:70px;display:block;background:var(--bg);border-radius:6px}.spark .label{font-size:12px;color:var(--muted);margin-bottom:4px}.spark .label b{color:var(--text)}
+td.status2{white-space:normal;line-height:1.3;min-width:150px}td.status2 b{color:var(--text);font-weight:600}
 tr.drv{cursor:pointer}tr.drv:hover,tr.drv.open{background:var(--bg)}tr.drv:focus{outline:2px solid var(--accent);outline-offset:-2px}
 tr.detail>td{padding:4px 10px 14px 28px;background:var(--bg);white-space:normal}
 table.days,table.dcams{width:auto;min-width:520px}table.days td,table.dcams td{padding:4px 10px}table.days th{cursor:default}

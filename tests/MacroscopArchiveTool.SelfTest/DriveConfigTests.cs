@@ -49,7 +49,7 @@ partial class Program
         R.Eq("Резервный архив", j.Role, "роль подставлена в отчёт");
         R.True(a.DrainForecastUtc == null, "у активного диска прогноза нет");
         R.Eq(new DateTime(2026, 12, 24), j.DrainForecastUtc!.Value.ToLocalTime().Date, "J: опустеет: 24.09 + 90 дн. + 1");
-        R.True(HtmlReport.Render(new[] { report }).Contains("опустеет ≈ 24.12.2026"), "прогноз в отчёте");
+        R.True(HtmlReport.Render(new[] { report }).Contains("опустеет ≈ <b>24.12.2026</b>"), "прогноз в отчёте");
 
         // metrics.json for Zabbix and the "how it changes" section.
         var tmp = Path.Combine(Path.GetTempPath(), "mat_metrics_" + Guid.NewGuid().ToString("N"));
