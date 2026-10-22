@@ -99,6 +99,7 @@ public sealed class ArchiveScanner
             c.Name = names.Get(c.Id) ?? macroscopRetention?.ById.GetValueOrDefault(c.Id)?.Name ?? CameraNames.ToDashedGuid(c.Id) ?? c.Id;
             ApplyRetention(c, config, macroscopRetention);
         }
+        if (macroscopRetention != null) ApplyDriveConfig(report.Drives, macroscopRetention.Drives);
         report.RetentionSource = DescribeRetentionSource(macroscopRetention, config);
         if (macroscopRetention != null) report.Warnings.AddRange(macroscopRetention.Warnings);
         report.Cameras = cameras.Values.ToList();
@@ -106,6 +107,20 @@ public sealed class ArchiveScanner
         ReportAnalyzer.Analyze(report, config.HeavyFactor);
         report.ScanSeconds = Math.Round(sw.Elapsed.TotalSeconds, 1);
         return report;
+    }
+
+    internal static void ApplyDriveConfig(List<DriveStat> drives, List<ArchiveDriveConfig> config)
+    {
+        static string N(string s) => s.Trim().TrimEnd('\\', '/').ToUpperInvariant();
+        foreach (var d in drives)
+        {
+            var c = config.FirstOrDefault(x => N(x.Name) == N(d.Name))
+                    ?? config.FirstOrDefault(x => x.Path != null && d.ArchiveRoot.StartsWith(x.Path.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (c == null) continue;
+            d.Role = c.Role;
+            d.MinFreeBytes = c.MinFreeBytes;
+            d.MaxArchiveBytes = c.MaxArchiveBytes;
+        }
     }
 
     /// <summary>mat.json entry wins, then Macroscop's configured max depth (or min if max is unset), then the default.</summary>

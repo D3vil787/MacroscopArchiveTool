@@ -35,8 +35,28 @@ public sealed class CameraSettings
     public int? ResolutionCode { get; set; }
 }
 
+/// <summary>One archive disk as configured in Macroscop (Configurator → Archive), from Server.SrvConf.</summary>
+public sealed record ArchiveDriveConfig(string Name, string? Id, string? Path, long? MinFreeBytes, long? MaxArchiveBytes,
+                                        bool? Archive, bool? Database, bool? Emergency)
+{
+    /// <summary>Role as the Configurator names it.</summary>
+    public string Role => (Archive, Database, Emergency) switch
+    {
+        (true, true, true) => "Резервный архив + БД",
+        (true, _, true) => "Резервный архив",
+        (true, true, _) => "Архив + БД",
+        (true, _, _) => "Только архив",
+        (false or null, true, _) => "Только БД",
+        _ => "Не используется",
+    };
+    public bool IsReserve => Emergency == true && Archive == true;
+    public bool IsUnused => Archive != true && Database != true;
+}
+
 public sealed class RetentionSettings
 {
+    /// <summary>Archive disks of this server from Server.SrvConf (empty when not readable).</summary>
+    public List<ArchiveDriveConfig> Drives { get; } = new();
     public Dictionary<string, CameraRetention> ById { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string? SourceFile { get; set; }
     public DateTime? BackupTimeLocal { get; set; }
@@ -107,6 +127,55 @@ public static class MacroscopConfig
         return null;
     }
 
+    /// <summary>Reads the archive disk list (role, minimum free space, maximum archive size) from Server.SrvConf.</summary>
+    public static List<ArchiveDriveConfig> ExtractDrives(NrbfGraph g)
+    {
+        var list = new List<ArchiveDriveConfig>();
+        foreach (var o in g.AllObjects().Where(o => o.ClassName.EndsWith("ArchiveDriveSettings", StringComparison.Ordinal)))
+        {
+            object? M(string name) => g.Resolve(o.Members.FirstOrDefault(m => m.Key == name).Value);
+            long? Mb(string name) => ToDouble(M(name)) is double d && d > 0 ? (long)(d * 1024 * 1024) : null;
+            var name = M("driveName") as string ?? M("path") as string;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            list.Add(new ArchiveDriveConfig(name.Trim(), (M("driveId") as Guid?)?.ToString() ?? M("driveId")?.ToString(), M("path") as string,
+                Mb("minFreeSpace"), Mb("maxArchiveSize"), M("_enableArchiveOnDrive") as bool?, M("_enableDatabaseOnDrive") as bool?, M("_emergencyDrive") as bool?));
+        }
+        return list;
+    }
+
+    /// <summary>Server.SrvConf in a backup folder, preferring the given server.</summary>
+    public static FileInfo? FindServerSettingsFile(DirectoryInfo backup, string? serverId)
+    {
+        var dirs = backup.EnumerateDirectories().ToList();
+        if (serverId != null)
+        {
+            var own = dirs.Where(d => CameraNames.Normalize(d.Name) == CameraNames.Normalize(serverId)).ToList();
+            if (own.Count > 0) dirs = own;
+        }
+        return dirs.Select(d => new FileInfo(Path.Combine(d.FullName, "ServerConfigs", "Server.SrvConf"))).FirstOrDefault(f => f.Exists);
+    }
+
+    private static void LoadDrives(RetentionSettings result, List<DirectoryInfo> backups, string? serverId)
+    {
+        bool seen = false;
+        foreach (var backup in backups)
+        {
+            try
+            {
+                var file = FindServerSettingsFile(backup, serverId);
+                if (file == null) continue;
+                seen = true;
+                var (graph, _) = NrbfReader.ReadAll(ReadShared(file.FullName));
+                var drives = ExtractDrives(graph);
+                if (drives.Count == 0) continue;
+                result.Drives.AddRange(drives);
+                return;
+            }
+            catch (Exception) { /* try an older backup */ }
+        }
+        if (seen) result.Warnings.Add("Настройки дисков (роль, лимиты) не прочитаны из Server.SrvConf.");
+    }
+
     /// <summary>How many of the newest backups to try before giving up.</summary>
     public const int MaxBackupsToTry = 5;
 
@@ -122,6 +191,7 @@ public static class MacroscopConfig
         {
             var backups = BackupsNewestFirst(archiveRoots).Take(MaxBackupsToTry).ToList();
             if (backups.Count == 0) { result.Warnings.Add("Резервные копии конфигурации Macroscop (ConfigsBackups) не найдены. Используется mat.json."); return result; }
+            LoadDrives(result, backups, serverId);
 
             foreach (var backup in backups)
             {

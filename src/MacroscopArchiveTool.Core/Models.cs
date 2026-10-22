@@ -46,6 +46,13 @@ public sealed class DriveStat
     /// </summary>
     public Dictionary<string, Dictionary<string, long>> DayCameraBytes { get; set; } = new();
 
+    /// <summary>Role in Macroscop ("Только архив", "Резервный архив", …) and its limits, from Server.SrvConf.</summary>
+    public string? Role { get; set; }
+    public long? MinFreeBytes { get; set; }
+    public long? MaxArchiveBytes { get; set; }
+    /// <summary>For reserve and unused disks with video: when the last recording expires by camera retention.</summary>
+    public DateTime? DrainForecastUtc { get; set; }
+
     /// <summary>True when video was written to this drive during the last 24 hours.</summary>
     public bool IsActive { get; set; }
 

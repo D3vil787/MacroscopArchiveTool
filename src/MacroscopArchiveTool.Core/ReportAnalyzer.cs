@@ -31,6 +31,25 @@ public static class ReportAnalyzer
             c.IsHeavy = median > 0 && c.DepthDays >= 1 && c.BytesPerDay >= heavyFactor * median;
 
         report.Cameras = report.Cameras.OrderByDescending(c => c.BytesPerDay).ToList();
+
+        // Disks that no longer receive video (reserve, unused, or simply idle): when does the last recording expire?
+        var retention = report.Cameras.ToDictionary(c => c.Id, c => c.RetentionDays ?? report.DefaultRetentionDays, StringComparer.OrdinalIgnoreCase);
+        foreach (var d in report.Drives)
+        {
+            d.DrainForecastUtc = null;
+            if (d.IsActive || d.DayCameraBytes.Count == 0) continue;
+            DateTime? last = null;
+            foreach (var (day, cams) in d.DayCameraBytes)
+            {
+                if (!DateTime.TryParseExact(day, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeLocal, out var t)) continue;
+                foreach (var cam in cams.Keys)
+                {
+                    var expires = t.AddDays(retention.GetValueOrDefault(cam, report.DefaultRetentionDays > 0 ? report.DefaultRetentionDays : 90) + 1).ToUniversalTime();
+                    if (last == null || expires > last) last = expires;
+                }
+            }
+            d.DrainForecastUtc = last;
+        }
     }
 
     public static double Median(IReadOnlyList<double> sorted)

@@ -73,7 +73,7 @@ public static class HtmlReport
         sb.Append("<h3>Диски</h3>");
         if (hasDays) sb.Append("<p class=\"muted\">Щёлкните строку диска, чтобы увидеть объём по дням, а затем день — чтобы увидеть камеры.</p>");
         sb.Append("<div class=\"scroll\"><table class=\"sortable drives\" data-s=\"").Append(index).Append("\"><thead><tr>")
-          .Append(Th("Диск")).Append(Th("Метка")).Append(Th("Размер", true)).Append(Th("Свободно", true))
+          .Append(Th("Диск")).Append(Th("Метка")).Append(Th("Роль")).Append(Th("Размер", true)).Append(Th("Свободно", true))
           .Append(Th("Заполнение", true)).Append(Th("Видео", true)).Append(Th("БД", true)).Append(Th("Прочее в архиве", true))
           .Append(Th("Вне архива", true)).Append(Th("Камер", true)).Append(Th("Самая старая", true)).Append(Th("Последняя запись", true))
           .Append(Th("Статус")).Append("</tr></thead><tbody>");
@@ -83,6 +83,8 @@ public static class HtmlReport
             var pct = known ? (double)d.UsedBytes / d.TotalBytes * 100 : 0;
             sb.Append(d.DayCameraBytes.Count > 0 ? $"<tr class=\"drv\" tabindex=\"0\" data-d=\"{H(d.Name)}\">" : "<tr>")
               .Append(Td((d.DayCameraBytes.Count > 0 ? "▸ " : "") + d.Name, cls: "strong")).Append(Td(d.VolumeLabel))
+              .Append(d.Role == null ? Td("—", cls: "muted")
+                      : Td(d.Role, cls: d.Role.StartsWith("Резерв") || d.Role == "Не используется" ? "warn" : null, title: Limits(d)))
               .Append(TdN(known ? Bytes(d.TotalBytes) : "—", d.TotalBytes)).Append(TdN(known ? Bytes(d.FreeBytes) : "—", d.FreeBytes));
             if (known)
                 sb.Append("<td class=\"num\" data-v=\"").Append(Inv(pct)).Append("\"><div class=\"bar\"><span style=\"width:")
@@ -97,7 +99,8 @@ public static class HtmlReport
               .Append(TdDate(d.OldestUtc)).Append(TdDate(d.NewestUtc, withTime: true))
               .Append(d.IsActive ? Td("пишется", cls: "ok")
                       : d.MediaBytes == 0 ? Td("без видео", cls: "muted")
-                      : Td("без записи > 24 ч", cls: "muted"))
+                      : Td("без записи > 24 ч" + (d.DrainForecastUtc is DateTime f ? $", опустеет ≈ {f.ToLocalTime().ToString("dd.MM.yyyy", Ru)}" : ""), cls: "muted",
+                           title: d.DrainForecastUtc != null ? "Когда истечёт срок хранения последней записи на диске (по срокам камер). Новые записи на диск не попадают, если его роль — резервный архив или «Не используется»." : null))
               .Append("</tr>");
         }
         sb.Append("</tbody></table></div>");
@@ -175,9 +178,19 @@ public static class HtmlReport
         "<li><b>Срок</b> — время хранения камеры из конфигурации Macroscop (если мин и макс различаются — «мин–макс»). Звёздочка — срок взят из mat.json. Наведите курсор, чтобы увидеть источник.</li>" +
         "<li><b>Запись</b> — настройки камеры из конфигурации Macroscop: режим записи, поток, кодек, ограничение fps архива, прореживание. Наведите курсор, чтобы увидеть детекторы движения, пред- и постзапись, fps и разрешение.</li>" +
         "<li><b>Сверх срока</b> — самая старая запись старше максимального срока хранения камеры больше чем на сутки.</li>" +
+        "<li><b>Роль</b> — роль диска в Конфигураторе Macroscop (из Server.SrvConf). Наведите курсор, чтобы увидеть «Мин. своб. место» и «Макс. размер архива». Резервный архив пишется только при отказе всех основных дисков.</li>" +
+        "<li><b>Опустеет</b> — для дисков без записи: когда истечёт срок хранения последней записи (по срокам камер).</li>" +
         "<li><b>Вне архива</b> — место на томе, занятое не папкой MacroscopArchive. Большие значения часто означают забытые данные.</li>" +
         "<li><b>До заполнения</b> — грубая оценка по свободному месту дисков, куда шла запись за сутки. Лимиты Macroscop «Мин. своб. место» и «Макс. размер архива» не учитываются.</li>" +
         "</ul></section>");
+
+    private static string Limits(DriveStat d)
+    {
+        var parts = new List<string>();
+        if (d.MinFreeBytes is long mf) parts.Add($"Мин. свободное место: {Bytes(mf)}");
+        if (d.MaxArchiveBytes is long ma) parts.Add($"Макс. размер архива: {Bytes(ma)}");
+        return parts.Count > 0 ? string.Join("\n", parts) : "Лимиты не заданы";
+    }
 
     private static string RetentionCell(CameraStat c)
     {

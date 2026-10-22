@@ -24,6 +24,7 @@ var tests = new List<(string Name, Action Body)>
     ("Обновление: версия, ответ GitHub, проверка и замена файлов", UpdaterParseAndApply),
     ("Удалённый скан: копирование, запуск, журнал, отчёт, уборка", RemoteScanRoundTrip),
     ("Очистка: правила категорий, карантин, восстановление, окончательное удаление", CleanupScanApplyRestorePurge),
+    ("Роли дисков из Server.SrvConf и прогноз опустения", DriveRolesAndDrainForecast),
 };
 
 int failed = 0;
