@@ -19,6 +19,7 @@ internal static class Program
             return args[0].ToLowerInvariant() switch
             {
                 "scan" => Scan(new Args(args.Skip(1))),
+                "scan-all" => ScanAll(new Args(args.Skip(1))),
                 "merge" => Merge(new Args(args.Skip(1))),
                 "init-config" => InitConfig(new Args(args.Skip(1))),
                 "dump-config" => DumpConfig(new Args(args.Skip(1))),
@@ -158,25 +159,62 @@ internal static class Program
         return 0;
     }
 
-    private const string TaskName = @"\MacroscopArchiveTool\WeeklyScan";
+    // scan-all [--out DIR] — this server and every enabled server from the «Серверы» list, one combined report
+    private static int ScanAll(Args a)
+    {
+        if (!OperatingSystem.IsWindows()) return Fail("Только в Windows.");
+        var config = LoadConfig(a.Get("--config"));
+        var outDir = a.Get("--out") ?? Path.Combine(AppContext.BaseDirectory, "reports");
+        Directory.CreateDirectory(outDir);
+        var storePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "MacroscopArchiveTool", "servers.json");
+        var remotes = MacroscopArchiveTool.Core.Remote.ServerStore.Load(storePath).Servers.Where(s => s.Enabled).ToList();
+        Console.WriteLine($"MacroscopArchiveTool {ToolInfo.Version} — скан этого сервера и ещё {remotes.Count} ({DateTime.Now:dd.MM.yyyy HH:mm})");
 
-    // schedule [--day MON] [--time 06:00]
+        var tasks = new List<Task<ScanReport?>>
+        {
+            Task.Run<ScanReport?>(() =>
+            {
+                try { return ReportRunner.Run(config, null, null, outDir, false, new Progress<string>(m => Console.WriteLine("  [этот сервер] " + m)), CancellationToken.None).Report; }
+                catch (Exception ex) { Console.WriteLine("  [этот сервер] ОШИБКА: " + ex.Message); return null; }
+            }),
+        };
+        foreach (var s in remotes)
+        {
+            var server = s;
+            tasks.Add(Task.Run<ScanReport?>(() =>
+            {
+                try
+                {
+                    using var host = new MacroscopArchiveTool.Core.Remote.WindowsRemoteHost(server);
+                    var r = new MacroscopArchiveTool.Core.Remote.RemoteScanner().Run(host, new Progress<string>(m => Console.WriteLine($"  [{server.Display}] {m}")), CancellationToken.None);
+                    ReportHistory.Load(outDir, r.MachineName);
+                    ReportStore.SaveJson(r, Path.Combine(outDir, ReportStore.BaseFileName(r) + ".json"));
+                    ReportHistory.Append(outDir, r);
+                    return r;
+                }
+                catch (Exception ex) { Console.WriteLine($"  [{server.Display}] ОШИБКА: {ex.Message}"); return null; }
+            }));
+        }
+        var reports = Task.WhenAll(tasks).GetAwaiter().GetResult().Where(r => r != null).Cast<ScanReport>().ToList();
+        if (reports.Count == 0) return Fail("Ни один сервер не просканирован.");
+        var html = Path.Combine(outDir, $"macroscop_сводный_{DateTime.Now:yyyyMMdd_HHmm}.html");
+        var history = reports.Select(r => r.MachineName).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(m => m, m => ReportHistory.Load(outDir, m), StringComparer.OrdinalIgnoreCase);
+        File.WriteAllText(html, HtmlReport.Render(reports, history), new UTF8Encoding(true));
+        Console.WriteLine($"Сводный отчёт ({reports.Count} из {remotes.Count + 1} серверов): {html}");
+        return reports.Count == remotes.Count + 1 ? 0 : 2;
+    }
+
+    // schedule [--day MON|…|SUN|DAILY] [--time 05:30]   (this server, as SYSTEM; all servers — in the window)
     private static int Schedule(Args a)
     {
         if (!OperatingSystem.IsWindows()) return Fail("Расписание доступно только в Windows.");
-        var day = (a.Get("--day") ?? "MON").ToUpperInvariant();
-        var time = a.Get("--time") ?? "06:00";
-        if (!System.Text.RegularExpressions.Regex.IsMatch(day, "^(MON|TUE|WED|THU|FRI|SAT|SUN|DAILY)$")) return Fail("--day: MON, TUE, WED, THU, FRI, SAT, SUN или DAILY (каждый день)");
-        if (!TimeOnly.TryParse(time, out _)) return Fail("--time в формате ЧЧ:ММ");
-
-        // schtasks /TR is limited to 261 characters, so the task runs a small .bat next to the exe.
-        var bat = Path.Combine(AppContext.BaseDirectory, "scheduled_scan.bat");
-        File.WriteAllText(bat, "@echo off\r\ncd /d \"%~dp0\"\r\nmat.exe scan >> \"%~dp0reports\\scheduled_scan.log\" 2>&1\r\n", Encoding.ASCII);
-        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "reports"));
-
-        var code = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"\\\"{bat}\\\"\" {(day == "DAILY" ? "/SC DAILY" : $"/SC WEEKLY /D {day}")} /ST {time} /RU SYSTEM /RL HIGHEST /F");
-        if (code != 0) return Fail("Не удалось создать задание. Запустите от имени администратора.");
-        Console.WriteLine($"Создано задание Планировщика «{TaskName}»: скан {(day == "DAILY" ? "каждый день" : $"каждую неделю, {day}")} в {time}, от имени SYSTEM.");
+        var day = (a.Get("--day") ?? "DAILY").ToUpperInvariant();
+        var days = new[] { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
+        if (day != "DAILY" && !days.Contains(day)) return Fail("--day: MON, TUE, WED, THU, FRI, SAT, SUN или DAILY (каждый день)");
+        if (!TimeSpan.TryParse(a.Get("--time") ?? "05:30", out var time)) return Fail("--time в формате ЧЧ:ММ");
+        var s = new ScheduleSettings { Daily = day == "DAILY", Day = day == "DAILY" ? DayOfWeek.Monday : (DayOfWeek)Array.IndexOf(days, day), Time = time };
+        ScanScheduler.Set(s, null, AppContext.BaseDirectory);
+        Console.WriteLine($"Плановый скан: {s.Describe()}, от имени SYSTEM. Скан всех серверов включается в окне программы («Отчёт по архиву → Расписание»).");
         Console.WriteLine($"Отчёты и журнал: {Path.Combine(AppContext.BaseDirectory, "reports")}");
         return 0;
     }
@@ -184,21 +222,9 @@ internal static class Program
     private static int Unschedule()
     {
         if (!OperatingSystem.IsWindows()) return Fail("Расписание доступно только в Windows.");
-        var code = RunSchtasks($"/Delete /TN \"{TaskName}\" /F");
-        Console.WriteLine(code == 0 ? "Задание удалено." : "Задание не найдено или нет прав.");
-        return code;
-    }
-
-    private static int RunSchtasks(string arguments)
-    {
-        var psi = new ProcessStartInfo("schtasks.exe", arguments) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        if (!string.IsNullOrWhiteSpace(stdout)) Console.WriteLine(stdout.Trim());
-        if (!string.IsNullOrWhiteSpace(stderr)) Console.Error.WriteLine(stderr.Trim());
-        return p.ExitCode;
+        ScanScheduler.Remove();
+        Console.WriteLine("Плановый скан удалён.");
+        return 0;
     }
 
     private static int InitConfig(Args a)
@@ -247,6 +273,7 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
                   --threads N     сколько дисков сканировать параллельно (по умолчанию 4)
                   --no-html       только JSON
                   --open          открыть HTML после сканирования
+  scan-all      Этот сервер и все серверы из списка «Серверы» → сводный отчёт (для расписания)
   merge         Свести JSON-отчёты нескольких серверов в один HTML
                   merge s1.json s2.json [-o сводный.html] [--config FILE] [--open]
   init-config   Создать mat.json с настройками сроков хранения
@@ -256,9 +283,9 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
                   cleanup scan [--backup-days 30] [--keep 10] [--log-days 90]   что можно удалить
                   cleanup apply --plan FILE                                    перенести выбранное в карантин
                   cleanup restore --set ID | cleanup purge --set ID|--older-than N
-  schedule      Еженедельный скан через Планировщик Windows (от администратора)
-                  [--day MON|…|SUN|DAILY] [--time 06:00]   (для Zabbix удобнее DAILY: metrics.json обновляется после каждого скана)
-  unschedule    Удалить еженедельный скан
+  schedule      Плановый скан этого сервера (Планировщик Windows, от имени SYSTEM)
+                  [--day DAILY|MON|…|SUN] [--time 05:30]   (по умолчанию каждый день; все серверы — в окне программы)
+  unschedule    Удалить плановый скан
   version       Показать версию
 """);
 

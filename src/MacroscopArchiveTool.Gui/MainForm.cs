@@ -13,6 +13,19 @@ internal sealed class MainForm : Form
     };
     private readonly Button _openJob;
 
+    private static readonly Label _scheduleStatus = Ui.Text("", Ui.Small, Ui.Muted, 300);
+
+    private static void RefreshSchedule()
+    {
+        try
+        {
+            var st = ScanScheduler.State();
+            _scheduleStatus.Text = !st.Exists ? "Плановый отчёт: выключен"
+                : $"Плановый отчёт: {ScanScheduler.LoadSettings().Describe()}" + (st.NextRun is DateTime n ? $", следующий {n:dd.MM HH:mm}" : "");
+        }
+        catch (Exception) { _scheduleStatus.Text = ""; }
+    }
+
     private readonly System.Windows.Forms.Timer _idleTimer = new() { Interval = 2000 };
 
     public static string StateDir => Path.Combine(WindowsSystemOps.DataDir, "retire");
@@ -44,7 +57,8 @@ internal sealed class MainForm : Form
         cards.Controls.Add(Card("Отчёт по архиву",
             "Объём и глубина архива по дискам, дням и камерам, сроки хранения из настроек Macroscop, «тяжёлые» камеры. " +
             "Можно добавить другие серверы — получится сводный отчёт. Только чтение.",
-            "Сделать отчёт", (_, _) => RunReport(), ("Серверы…", (Action)(() => { using var f = new ServersForm(); f.ShowDialog(this); }))), 0, 0);
+            "Сделать отчёт", (_, _) => RunReport(), ("Серверы…", (Action)(() => { using var f = new ServersForm(); f.ShowDialog(this); })),
+            ("Расписание…", (Action)(() => { using var f = new ScheduleForm(); f.ShowDialog(this); RefreshSchedule(); }))), 0, 0);
         cards.Controls.Add(Card("Вывести диск из эксплуатации",
             "Перенести архив с диска, который нужно убрать (например, с ошибками SMART), на другой том или в файл виртуального диска. " +
             "Записи остаются доступны, пока не истечёт срок хранения.",
@@ -93,14 +107,14 @@ internal sealed class MainForm : Form
             if (Ui.LoadConfig().CheckUpdates) await CheckUpdatesAsync(manual: false);
         };
 
-        Load += (_, _) => RefreshJobs();
+        Load += (_, _) => { RefreshJobs(); RefreshSchedule(); };
         Activated += (_, _) => RefreshJobs();
         FormClosing += OnMainClosing;
         _idleTimer.Tick += (_, _) => UpdateLive();
         _idleTimer.Start();
     }
 
-    private static Control Card(string title, string text, string button, EventHandler onClick, (string Text, Action Click)? link = null)
+    private static Control Card(string title, string text, string button, EventHandler onClick, params (string Text, Action Click)[] links)
     {
         var p = new FlowLayoutPanel
         {
@@ -111,13 +125,15 @@ internal sealed class MainForm : Form
         p.Controls.Add(Ui.Text(text, null, null, 300));
         var b = Ui.Button(button, onClick);
         b.Margin = new Padding(0, 6, 16, 0);
-        if (link is { } l)
+        var row = Ui.Row(b);
+        foreach (var l in links)
         {
-            var ll = new LinkLabel { Text = l.Text, AutoSize = true, Font = Ui.Base, Margin = new Padding(0, 12, 0, 0) };
+            var ll = new LinkLabel { Text = l.Text, AutoSize = true, Font = Ui.Base, Margin = new Padding(0, 12, 12, 0) };
             ll.LinkClicked += (_, _) => l.Click();
-            p.Controls.Add(Ui.Row(b, ll));
+            row.Controls.Add(ll);
         }
-        else p.Controls.Add(b);
+        p.Controls.Add(row);
+        if (title == "Отчёт по архиву") p.Controls.Add(_scheduleStatus);
         return p;
     }
 
