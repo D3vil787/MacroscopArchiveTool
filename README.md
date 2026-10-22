@@ -1,5 +1,12 @@
 # MacroscopArchiveTool
 
+> **English summary.** Free, open-source (MIT) companion tool for the archive of **Macroscop 4.7** video management
+> software on Windows Server. It reports archive usage per disk, day and camera (including several servers in one report),
+> reads per-camera retention from Macroscop configuration backups, and safely retires a failing archive disk by moving
+> its archive into another volume or a VHDX file with verified, resumable copying and rollback.
+> It never modifies Macroscop binaries or databases. Downloads: [GitHub Releases](https://github.com/D3vil787/MacroscopArchiveTool/releases).
+> Code signing policy: [CODE_SIGNING.md](CODE_SIGNING.md).
+
 Утилита для анализа и обслуживания видеоархива **Macroscop 4.7** (Standalone/Server под Windows).
 Запускается прямо на сервере Macroscop, работает в изолированной сети, не требует установки .NET.
 
@@ -128,3 +135,12 @@ dotnet publish src/MacroscopArchiveTool.Cli -c Release -r win-x64 -o publish # �
 ```
 
 Новая версия в `Directory.Build.props` + push в `main` → GitHub Actions соберёт и опубликует релиз `vX.Y.Z` с zip-архивом.
+
+## Лицензия и подпись
+
+Распространяется по лицензии [MIT](LICENSE). Политика подписи кода и конфиденциальности — [CODE_SIGNING.md](CODE_SIGNING.md):
+программа сама обращается в сеть только для проверки обновлений на GitHub (отключается в `mat.json`) и к серверам,
+которые пользователь добавил в отчёт.
+
+Проект независимый и не связан с разработчиком Macroscop. Macroscop — товарный знак его правообладателя.
+

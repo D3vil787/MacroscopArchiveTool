@@ -29,15 +29,39 @@ jobs:
       - name: Publish command line mat.exe (win-x64, self-contained)
         run: dotnet publish src/MacroscopArchiveTool.Cli -c Release -r win-x64 -o publish
 
-      - name: Zip
-        shell: pwsh
-        run: Compress-Archive -Path publish/* -DestinationPath MacroscopArchiveTool-win-x64.zip
-
-      - name: Upload artifact
+      - name: Upload artifact (unsigned build output)
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: MacroscopArchiveTool-win-x64
           path: publish/
+
+      # Code signing by SignPath Foundation (see CODE_SIGNING.md). Inactive until the repository variable
+      # SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN are set after the project is approved.
+      # Only pushes to main are signed; every request waits for manual approval in SignPath.
+      - name: Sign with SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: MacroscopArchiveTool
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: initial
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Use signed files
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          Copy-Item signed/* publish/ -Recurse -Force
+          Get-ChildItem publish/*.exe | ForEach-Object { $s = Get-AuthenticodeSignature $_.FullName; Write-Host "$($_.Name): $($s.Status)"; if ($s.Status -ne 'Valid') { throw "$($_.Name) is not signed" } }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath MacroscopArchiveTool-win-x64.zip
 
       # Release on version bump: when Directory.Build.props carries a version that has no release yet,
       # the push to main publishes vX.Y.Z with the zip. Re-runs and other commits are no-ops.

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration (copy into the SignPath project).
+     The GitHub artifact "MacroscopArchiveTool-win-x64" is a zip of the publish folder;
+     both executables inside it get an Authenticode signature, everything else is passed through. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="MacroscopArchiveTool.exe">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="mat.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
