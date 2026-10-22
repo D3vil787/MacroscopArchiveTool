@@ -90,9 +90,9 @@ internal sealed class CleanupForm : Form
         var qBox = new GroupBox { Text = "Карантин", Dock = DockStyle.Fill, Font = Ui.Base, Padding = new Padding(8) };
         _quarantine.Columns.Add("Сервер", 220);
         _quarantine.Columns.Add("Когда", 150);
-        _quarantine.Columns.Add("Диски", 220);
+        _quarantine.Columns.Add("Диски", 330);
         _quarantine.Columns.Add("Объём", 110);
-        _quarantine.Columns.Add("Удалится окончательно", 200);
+        _quarantine.Columns.Add("Удалится окончательно", 190);
         _quarantine.SelectedIndexChanged += (_, _) => UpdateButtons();
         var qLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
         qLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -198,7 +198,7 @@ internal sealed class CleanupForm : Form
             foreach (var g in scan.Quarantine.GroupBy(q => q.SetId))
             {
                 var created = g.Min(q => q.CreatedUtc);
-                var purgeAt = _options.QuarantineDays > 0 ? Ui.When(created.AddDays(_options.QuarantineDays)) + " (при проверке после этой даты)" : "только вручную";
+                var purgeAt = _options.QuarantineDays > 0 ? "после " + Ui.When(created.AddDays(_options.QuarantineDays)) : "только вручную";
                 _quarantine.Items.Add(new ListViewItem(new[]
                 {
                     t.Name, created.ToLocalTime().ToString("dd.MM.yyyy HH:mm"),
