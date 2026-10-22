@@ -90,7 +90,9 @@ internal sealed class MainForm : Form
         link.LinkClicked += (_, _) => Ui.Open("https://github.com/D3vil787/MacroscopArchiveTool");
         var check = new LinkLabel { Text = "Проверить обновления", AutoSize = true, Font = Ui.Small, Margin = new Padding(24, 8, 0, 0) };
         check.LinkClicked += async (_, _) => await CheckUpdatesAsync(manual: true);
-        root.Controls.Add(Ui.Row(link, check), 0, 3);
+        var settings = new LinkLabel { Text = "Настройки", AutoSize = true, Font = Ui.Small, Margin = new Padding(24, 8, 0, 0) };
+        settings.LinkClicked += (_, _) => { using var f = new SettingsForm(); f.ShowDialog(this); };
+        root.Controls.Add(Ui.Row(link, check, settings), 0, 3);
 
         // Update banner above everything; hidden until GitHub has a newer release.
         _updateText = Ui.Text("", Ui.Subtitle, Color.White);
@@ -104,6 +106,13 @@ internal sealed class MainForm : Form
         Shown += async (_, _) =>
         {
             Updater.CleanupOldFiles(AppContext.BaseDirectory);
+            if (WelcomeForm.ShouldShow())
+            {
+                using var w = new WelcomeForm();
+                w.ShowDialog(this);
+                if (w.AddServers) { using var f = new ServersForm(); f.ShowDialog(this); }
+                if (w.StartReport || w.AddServers) RunReport();
+            }
             if (Ui.LoadConfig().CheckUpdates) await CheckUpdatesAsync(manual: false);
         };
 
