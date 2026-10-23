@@ -17,6 +17,14 @@ public sealed class ArchiveScanner
     /// <summary>Files at least this large are video blobs; their timestamps define the recorded time range.</summary>
     public long BlobThresholdBytes { get; init; } = 1L * 1024 * 1024;
 
+    /// <summary>Where closed fragment folders are remembered between scans; null = always read everything.</summary>
+    public string? CacheDir { get; init; }
+
+    /// <summary>The newest fragment folders of each parent are always re-read, even if cached (a quiet camera may append to them).</summary>
+    private const int AlwaysRereadNewest = 3;
+
+    private sealed class RootStats { public int DirsRead, DirsCached; public long Files; }
+
     private static readonly EnumerationOptions Recursive = new()
     {
         RecurseSubdirectories = true,
@@ -72,8 +80,11 @@ public sealed class ArchiveScanner
         Parallel.ForEach(archiveRoots, po, root =>
         {
             progress?.Report($"Сканирую {root} ...");
-            partials.Add(ScanRoot(root, report.ScannedAtUtc, ct));
-            progress?.Report($"Готово: {root}");
+            var t = Stopwatch.StartNew();
+            var stats = new RootStats();
+            partials.Add(ScanRoot(root, report.ScannedAtUtc, stats, ct));
+            progress?.Report($"Готово: {root} — {t.Elapsed.TotalSeconds:0} с; папок прочитано {stats.DirsRead:N0}" +
+                             (stats.DirsCached > 0 ? $", из кэша {stats.DirsCached:N0}" : "") + $", файлов {stats.Files:N0}");
         });
 
         var cameras = new Dictionary<string, CameraStat>(StringComparer.OrdinalIgnoreCase);
@@ -159,7 +170,7 @@ public sealed class ArchiveScanner
         return $"конфигурация Macroscop (резервная копия от {when}, камер: {m.ById.Count}); исключения — mat.json";
     }
 
-    private (DriveStat, Dictionary<string, CameraStat>, List<string>) ScanRoot(string archiveRoot, DateTime nowUtc, CancellationToken ct)
+    private (DriveStat, Dictionary<string, CameraStat>, List<string>) ScanRoot(string archiveRoot, DateTime nowUtc, RootStats stats, CancellationToken ct)
     {
         var warnings = new List<string>();
         var drive = new DriveStat { ArchiveRoot = archiveRoot, Name = DriveName(archiveRoot) };
@@ -186,13 +197,15 @@ public sealed class ArchiveScanner
             if (Directory.Exists(media))
             {
                 var mediaDir = new DirectoryInfo(media);
+                var cache = ScanCache.Open(CacheDir, archiveRoot, mediaDir.CreationTimeUtc);
+                var stableBefore = nowUtc - ScanCache.StableAge;
                 foreach (var f in mediaDir.EnumerateFiles("*", Flat))
                     drive.OtherArchiveBytes += f.Length;   // channel descriptors (.dsc)
 
                 foreach (var camDir in mediaDir.EnumerateDirectories("*", Flat))
                 {
                     ct.ThrowIfCancellationRequested();
-                    var cam = ScanCamera(camDir, drive.Name, drive.DayCameraBytes, ct);
+                    var cam = ScanCamera(camDir, drive.Name, drive.DayCameraBytes, cache, stableBefore, stats, ct);
                     if (cam.Bytes == 0 && cam.FragmentCount == 0) continue;
                     cams[cam.Id] = cam;
                     drive.MediaBytes += cam.Bytes;
@@ -200,6 +213,7 @@ public sealed class ArchiveScanner
                     drive.OldestUtc = Min(drive.OldestUtc, cam.OldestUtc);
                     drive.NewestUtc = Max(drive.NewestUtc, cam.NewestUtc);
                 }
+                cache.Save();
             }
             else warnings.Add($"{drive.Name}: нет папки media");
         }
@@ -211,27 +225,81 @@ public sealed class ArchiveScanner
         return (drive, cams, warnings);
     }
 
-    private CameraStat ScanCamera(DirectoryInfo camDir, string driveName, Dictionary<string, Dictionary<string, long>> days, CancellationToken ct)
+    private CameraStat ScanCamera(DirectoryInfo camDir, string driveName, Dictionary<string, Dictionary<string, long>> days,
+                                  ScanCache cache, DateTime stableBeforeUtc, RootStats stats, CancellationToken ct)
     {
         var cam = new CameraStat { Id = CameraNames.Normalize(camDir.Name) };
-        var fragmentDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int n = 0;
-        foreach (var f in camDir.EnumerateFiles("*", Recursive))
+        int fragments = 0;
+
+        void AddDay(string day, long bytes)
         {
-            if ((++n & 0x3FF) == 0) ct.ThrowIfCancellationRequested();
-            cam.Bytes += f.Length;
-            if (f.Length >= BlobThresholdBytes)
+            if (!days.TryGetValue(day, out var perCam)) days[day] = perCam = new(StringComparer.OrdinalIgnoreCase);
+            perCam[cam.Id] = perCam.GetValueOrDefault(cam.Id) + bytes;
+        }
+
+        void Apply(ScanCache.Entry e)
+        {
+            cam.Bytes += e.Bytes;
+            if (!e.HasBlobs) return;
+            fragments++;
+            cam.OldestUtc = Min(cam.OldestUtc, new DateTime(e.OldestTicks, DateTimeKind.Utc));
+            cam.NewestUtc = Max(cam.NewestUtc, new DateTime(e.NewestTicks, DateTimeKind.Utc));
+            foreach (var (day, bytes) in e.Days) AddDay(day, bytes);
+        }
+
+        // Explicit stack instead of recursion: archives are deep enough and this keeps the cache logic in one place.
+        var stack = new Stack<(DirectoryInfo Dir, string Rel)>();
+        stack.Push((camDir, camDir.Name));
+        while (stack.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (dir, rel) = stack.Pop();
+            stats.DirsRead++;
+            var own = new ScanCache.Entry { DirWriteTicks = dir.LastWriteTimeUtc.Ticks };
+            Dictionary<string, long>? ownDays = null;
+            var subdirs = new List<DirectoryInfo>();
+            try
             {
-                var t = f.LastWriteTimeUtc;
-                var day = t.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                if (!days.TryGetValue(day, out var perCam)) days[day] = perCam = new(StringComparer.OrdinalIgnoreCase);
-                perCam[cam.Id] = perCam.GetValueOrDefault(cam.Id) + f.Length;
-                cam.OldestUtc = Min(cam.OldestUtc, t);
-                cam.NewestUtc = Max(cam.NewestUtc, t);
-                fragmentDirs.Add(f.DirectoryName ?? "");
+                foreach (var entry in dir.EnumerateFileSystemInfos("*", Flat))
+                {
+                    if (entry is DirectoryInfo sd) { subdirs.Add(sd); continue; }
+                    var f = (FileInfo)entry;
+                    stats.Files++;
+                    own.Bytes += f.Length;
+                    if (f.Length < BlobThresholdBytes) continue;
+                    var t = f.LastWriteTimeUtc;
+                    var day = t.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    ownDays ??= new(StringComparer.Ordinal);
+                    ownDays[day] = ownDays.GetValueOrDefault(day) + f.Length;
+                    if (own.OldestTicks == 0 || t.Ticks < own.OldestTicks) own.OldestTicks = t.Ticks;
+                    if (t.Ticks > own.NewestTicks) own.NewestTicks = t.Ticks;
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or DirectoryNotFoundException or IOException) { continue; }
+
+            if (ownDays != null) own.Days = ownDays.Select(kv => (kv.Key, kv.Value)).ToArray();
+            Apply(own);
+            if (subdirs.Count == 0 && !ReferenceEquals(dir, camDir)) cache.Put(rel, own);   // a leaf: remember it
+
+            // Cached subfolders, except the few newest ones of this parent, which are always re-read.
+            var hits = new List<(DirectoryInfo Dir, string Rel, ScanCache.Entry Entry)>();
+            foreach (var sd in subdirs)
+            {
+                var subRel = rel + "\\" + sd.Name;
+                var hit = cache.Get(subRel, sd.LastWriteTimeUtc, stableBeforeUtc);
+                if (hit != null) hits.Add((sd, subRel, hit));
+                else stack.Push((sd, subRel));
+            }
+            foreach (var (sd, subRel, e) in hits.OrderByDescending(h => h.Entry.NewestTicks).Take(AlwaysRereadNewest))
+                stack.Push((sd, subRel));
+            foreach (var (_, subRel, e) in hits.OrderByDescending(h => h.Entry.NewestTicks).Skip(AlwaysRereadNewest))
+            {
+                stats.DirsCached++;
+                Apply(e);
+                cache.Put(subRel, e);
             }
         }
-        cam.FragmentCount = fragmentDirs.Count;
+        cam.FragmentCount = fragments;
         if (cam.Bytes > 0) cam.BytesByDrive[driveName] = cam.Bytes;
         return cam;
     }

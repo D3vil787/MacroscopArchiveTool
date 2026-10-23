@@ -64,6 +64,11 @@
 `silentDaysMotion` в mat.json, по умолчанию 1 и 7 дней); отключённые в Macroscop; удалённые из конфигурации, от которых
 остался архив (имя берётся из прежних журналов). Для каждой — до какого числа хранится её архив и что сделать.
 
+**Быстрый повторный скан** — на больших архивах (сотни тысяч папок фрагментов на iSCSI-дисках) первый скан может
+идти десятки минут: Windows читает с дисков каждую папку. Поэтому закрытые фрагменты старше двух суток запоминаются
+в `C:\ProgramData\MacroscopArchiveTool\scancache`, и следующий скан открывает только новые и изменившиеся папки.
+Раз в неделю кэш перестраивается целиком; отключить — в настройках или ключом `mat scan --full`.
+
 **Мониторинг в Zabbix** — после каждого скана пишется `C:\ProgramData\MacroscopArchiveTool\metrics.json`;
 агент Zabbix читает его, шаблон даёт элементы, обнаружение дисков и триггеры (скан устарел, мало дней до заполнения,
 камеры сверх срока, архивный диск перестал получать записи). Настройка — [zabbix/README.md](zabbix/README.md).
@@ -131,7 +136,7 @@
 ## Командная строка
 
 ```
-mat scan  [--out DIR] [--config FILE] [--roots A;B] [--logs DIR] [--threads N] [--no-html] [--open]
+mat scan  [--out DIR] [--config FILE] [--roots A;B] [--logs DIR] [--threads N] [--full] [--no-html] [--open]
 mat merge s1.json s2.json [-o сводный.html] [--config FILE] [--open]
 mat init-config
 mat dump-config [--file FILE] [--out FILE]

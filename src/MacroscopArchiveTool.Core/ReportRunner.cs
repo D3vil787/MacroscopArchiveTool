@@ -25,7 +25,7 @@ public static class ReportRunner
                 : "Сроки хранения: из mat.json (конфигурация Macroscop не прочитана)");
         }
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var report = new ArchiveScanner().Scan(list, names, config, progress, ct, retention);
+        var report = new ArchiveScanner { CacheDir = config.ScanCache ? Core.ScanCache.DefaultDir : null }.Scan(list, names, config, progress, ct, retention);
         progress?.Report($"Сканирование дисков: {report.ScanSeconds:0} с");
 
         Directory.CreateDirectory(outDir);

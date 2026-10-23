@@ -27,6 +27,9 @@ public sealed class ToolConfig
     /// <summary>How many drives are scanned in parallel.</summary>
     public int ScanThreads { get; set; } = 4;
 
+    /// <summary>Remember closed fragment folders between scans (much faster repeated scans of large iSCSI archives).</summary>
+    public bool ScanCache { get; set; } = true;
+
     /// <summary>A continuously recording camera without new recordings for this many days is reported as silent.</summary>
     public double SilentDaysContinuous { get; set; } = 1;
     /// <summary>The same for motion recording (a quiet scene may really have no motion for a while).</summary>

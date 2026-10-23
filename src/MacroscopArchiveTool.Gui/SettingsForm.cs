@@ -20,6 +20,7 @@ internal sealed class SettingsForm : Form
     private readonly NumericUpDown _silentCont = Num(0.5m, 365, 1, 0.5m);
     private readonly NumericUpDown _silentMotion = Num(1, 365, 0);
     private readonly NumericUpDown _threads = Num(1, 32, 0);
+    private readonly CheckBox _cache = new() { Text = "Запоминать уже прочитанные папки архива (повторный отчёт в разы быстрее)", AutoSize = true };
     private readonly TextBox _roots = new() { Width = 560 };
     private readonly TextBox _logs = new() { Width = 560 };
     private readonly CheckBox _updates = new() { Text = "Проверять обновления на GitHub при запуске", AutoSize = true };
@@ -45,6 +46,7 @@ internal sealed class SettingsForm : Form
         _silentCont.Value = Math.Clamp((decimal)_cfg.SilentDaysContinuous, 0.5m, 365);
         _silentMotion.Value = Math.Clamp((decimal)_cfg.SilentDaysMotion, 1, 365);
         _threads.Value = Math.Clamp(_cfg.ScanThreads, 1, 32);
+        _cache.Checked = _cfg.ScanCache;
         _roots.Text = string.Join("; ", _cfg.ArchiveRoots);
         _roots.PlaceholderText = "пусто — найти MacroscopArchive на всех дисках";
         _logs.Text = _cfg.LogsDir ?? "";
@@ -67,6 +69,7 @@ internal sealed class SettingsForm : Form
 
         p.Controls.Add(Section("Сканирование (для опытных)"));
         p.Controls.Add(Ui.Row(Ui.Text("Дисков сканировать одновременно:"), _threads));
+        p.Controls.Add(_cache);
         p.Controls.Add(Ui.Text("Папки архива через «;»:", Ui.Small));
         p.Controls.Add(_roots);
         p.Controls.Add(Ui.Text("Папка журналов Macroscop (имена камер):", Ui.Small));
@@ -114,6 +117,7 @@ internal sealed class SettingsForm : Form
         _cfg.SilentDaysContinuous = (double)_silentCont.Value;
         _cfg.SilentDaysMotion = (double)_silentMotion.Value;
         _cfg.ScanThreads = (int)_threads.Value;
+        _cfg.ScanCache = _cache.Checked;
         _cfg.ArchiveRoots = roots;
         _cfg.LogsDir = _logs.Text.Trim().Length > 0 ? _logs.Text.Trim() : null;
         _cfg.CheckUpdates = _updates.Checked;

@@ -26,6 +26,7 @@ var tests = new List<(string Name, Action Body)>
     ("Очистка: правила категорий, карантин, восстановление, окончательное удаление", CleanupScanApplyRestorePurge),
     ("Роли дисков из Server.SrvConf и прогноз опустения", DriveRolesAndDrainForecast),
     ("Потерянные камеры: не пишет, нет архива, удалена, отключена, на другом сервере", LostCameraKinds),
+    ("Кэш скана: повторный скан не открывает старые фрагменты и даёт тот же результат", ScanCacheSameResult),
 };
 
 int failed = 0;
@@ -257,6 +258,71 @@ static void RetentionFromBackups()
     var bad = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
     Eq(0, bad.ById.Count, "только битая копия — сроков нет");
     True(bad.Warnings.Count == 1 && bad.Warnings[0].Contains("mat.json"), "предупреждение и откат на mat.json");
+}
+
+static void ScanCacheSameResult()
+{
+    var root = Path.Combine(Path.GetTempPath(), "mat-cache-" + Guid.NewGuid().ToString("N"));
+    var arch = Path.Combine(root, "MacroscopArchive");
+    var cacheDir = Path.Combine(root, "cache");
+    var now = DateTime.UtcNow;
+    void Frag(string cam, string name, int daysAgo, int blobs)
+    {
+        var dir = Path.Combine(arch, "media", cam, "1", "1", name);
+        Directory.CreateDirectory(dir);
+        var t = now.AddDays(-daysAgo);
+        for (int i = 0; i < blobs; i++)
+        {
+            var f = Path.Combine(dir, "blob" + i);
+            using (var fs = System.IO.File.Create(f)) fs.SetLength(2_000_000 + i * 1000);
+            System.IO.File.SetLastWriteTimeUtc(f, t.AddMinutes(i));
+        }
+        System.IO.File.WriteAllBytes(dir + ".fidx", new byte[85]);
+        Directory.SetLastWriteTimeUtc(dir, t.AddMinutes(blobs));
+    }
+    const string camA = "7a1c0000000040008000000000000037", camB = "7a1c00000000400080000000000000a1";
+    for (int d = 0; d < 20; d++) Frag(camA, "a" + d.ToString("00"), 40 - d, 3);
+    Frag(camA, "live", 0, 2);
+    for (int d = 0; d < 8; d++) Frag(camB, "b" + d, 15 - d, 1);
+
+    var names = CameraNames.FromLogsDir(Path.Combine(root, "nologs"));
+    var cfg = new ToolConfig { ScanThreads = 1 };
+    string Finger(ScanReport r) => string.Join(";", r.Drives.Select(d => $"{d.MediaBytes}/{d.FragmentCount}/{d.OldestUtc:o}/{d.NewestUtc:o}/" +
+        string.Join(",", d.DayCameraBytes.OrderBy(x => x.Key).Select(x => x.Key + "=" + string.Join("+", x.Value.OrderBy(y => y.Key).Select(y => y.Key + ":" + y.Value))))))
+        + "|" + string.Join(";", r.Cameras.OrderBy(c => c.Id).Select(c => $"{c.Id}:{c.Bytes}:{c.FragmentCount}:{c.OldestUtc:o}:{c.NewestUtc:o}"));
+    (ScanReport R, string Log) Run(bool cache)
+    {
+        var log = new StringBuilder();
+        var r = new ArchiveScanner { CacheDir = cache ? cacheDir : null }.Scan(new[] { arch }, names, cfg, new SyncProgress(m => log.AppendLine(m)));
+        return (r, log.ToString());
+    }
+    try
+    {
+        var full = Finger(Run(false).R);
+        var first = Run(true);
+        Eq(full, Finger(first.R), "первый скан с кэшем = полный");
+        True(!first.Log.Contains("из кэша"), "в первый раз кэша нет");
+        var second = Run(true);
+        Eq(full, Finger(second.R), "повторный скан из кэша = полный");
+        // camA: 20 old fragments, 3 newest re-read → 17; live is too fresh. camB: 8 old, 3 re-read → 5.
+        True(second.Log.Contains("из кэша 22"), "старые фрагменты взяты из кэша: " + second.Log);
+
+        // Macroscop deletes the oldest fragment and starts a new one; an old fragment gets an extra blob (folder time changes).
+        Directory.Delete(Path.Combine(arch, "media", camA, "1", "1", "a00"), true);
+        System.IO.File.Delete(Path.Combine(arch, "media", camA, "1", "1", "a00.fidx"));
+        Frag(camB, "b8", 1, 2);
+        var grown = Path.Combine(arch, "media", camA, "1", "1", "a05");
+        using (var fs = System.IO.File.Create(Path.Combine(grown, "blob9"))) fs.SetLength(3_000_000);
+        System.IO.File.SetLastWriteTimeUtc(Path.Combine(grown, "blob9"), now.AddDays(-30));
+        Directory.SetLastWriteTimeUtc(grown, now.AddDays(-30).AddHours(1));
+        var expected = Finger(Run(false).R);
+        Eq(expected, Finger(Run(true).R), "после изменений скан с кэшем = полный");
+
+        // A different disk under the same letter (other media folder creation time) ignores the old cache.
+        Directory.SetCreationTimeUtc(Path.Combine(arch, "media"), now.AddDays(-400));
+        True(!Run(true).Log.Contains("из кэша"), "кэш чужого диска не используется");
+    }
+    finally { try { Directory.Delete(root, true); } catch (Exception) { } }
 }
 
 static (string Src, string Dst, string Root) CopyFixture()
@@ -594,3 +660,10 @@ static class FakeMacroscopConfig
     }
 }
 #pragma warning restore SYSLIB0011
+
+sealed class SyncProgress : IProgress<string>
+{
+    private readonly Action<string> _a;
+    public SyncProgress(Action<string> a) => _a = a;
+    public void Report(string value) { lock (this) _a(value); }
+}

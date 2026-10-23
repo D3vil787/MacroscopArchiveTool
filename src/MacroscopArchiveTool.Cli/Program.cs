@@ -34,11 +34,12 @@ internal static class Program
         catch (Exception ex) { return Fail($"Ошибка: {ex.Message}"); }
     }
 
-    // scan [--out DIR] [--config FILE] [--roots A;B] [--logs DIR] [--threads N] [--no-html] [--open]
+    // scan [--out DIR] [--config FILE] [--roots A;B] [--logs DIR] [--threads N] [--full] [--no-html] [--open]
     private static int Scan(Args a)
     {
         var config = LoadConfig(a.Get("--config"));
         if (a.Get("--threads") is { } t) config.ScanThreads = int.Parse(t);
+        if (a.Has("--full")) config.ScanCache = false;
 
         var roots = a.Get("--roots")?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
                     ?? (config.ArchiveRoots.Count > 0 ? config.ArchiveRoots : ArchiveScanner.FindArchiveRoots());
@@ -61,7 +62,7 @@ internal static class Program
                 ? $"Сроки хранения: {retention.ById.Count} камер из конфигурации Macroscop ({retention.SourceFile})"
                 : "Сроки хранения: из mat.json (конфигурация Macroscop не прочитана — подробности в отчёте)");
         }
-        var report = new ArchiveScanner().Scan(roots, names, config, progress, cts.Token, retention);
+        var report = new ArchiveScanner { CacheDir = config.ScanCache ? ScanCache.DefaultDir : null }.Scan(roots, names, config, progress, cts.Token, retention);
 
         var outDir = a.Get("--out") ?? Path.Combine(AppContext.BaseDirectory, "reports");
         Directory.CreateDirectory(outDir);
@@ -271,6 +272,7 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
                   --roots A;B     папки MacroscopArchive вручную (по умолчанию ищутся на всех дисках)
                   --logs DIR      папка логов Macroscop для имён камер
                   --threads N     сколько дисков сканировать параллельно (по умолчанию 4)
+                  --full          перечитать все папки, не используя кэш прошлых сканов
                   --no-html       только JSON
                   --open          открыть HTML после сканирования
   scan-all      Этот сервер и все серверы из списка «Серверы» → сводный отчёт (для расписания)
@@ -292,7 +294,7 @@ MacroscopArchiveTool {ToolInfo.Version} — анализ архива Macroscop 
     /// <summary>Tiny argument parser: --key value, boolean --flags and positional values.</summary>
     private sealed class Args
     {
-        private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "--no-html", "--open", "--tree" };
+        private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase) { "--no-html", "--open", "--tree", "--full" };
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _flags = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Positional { get; } = new();
