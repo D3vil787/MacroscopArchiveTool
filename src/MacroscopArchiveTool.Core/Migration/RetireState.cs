@@ -51,6 +51,8 @@ public sealed class RetireState
     public bool AllowActiveSource { get; set; }
 
     public DateTime? SourceNewestUtc { get; set; }
+    /// <summary>Role of the source disk in Macroscop (from the newest configuration backup), e.g. «Резервный архив»; null = not read.</summary>
+    public string? SourceRole { get; set; }
     public DateTime? DrainForecastUtc { get; set; }
 
     public List<string> StoppedServices { get; set; } = new();

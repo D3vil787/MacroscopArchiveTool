@@ -164,7 +164,7 @@ public static class HtmlReport
             if (c.ExceedsRetention) flags.Add("<span class=\"tag bad\">сверх срока</span>");
             if (ReportAnalyzer.IsProblem(c.LostKind)) flags.Add($"<span class=\"tag warn\">{H(LostShort(c.LostKind))}</span>");
             sb.Append("<tr").Append(c.ExceedsRetention ? " class=\"rowbad\"" : c.IsHeavy ? " class=\"rowwarn\"" : "").Append(">")
-              .Append(Td(c.Name, cls: "strong", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
+              .Append(Td(c.Name, cls: "strong camname", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
             if (multi) sb.Append(Td(r.ServerName));
             sb.Append(TdN(Bytes((long)c.BytesPerDay), c.BytesPerDay))
               .Append(TdN(c.AvgMbitPerSec.ToString("0.0", Ru) + " Мбит/с", c.AvgMbitPerSec))
@@ -173,10 +173,10 @@ public static class HtmlReport
               .Append(TdN(Bytes(c.Bytes), c.Bytes))
               .Append(TdN(c.DepthDays.ToString("0", Ru) + " дн.", c.DepthDays, c.ExceedsRetention ? "bad" : null))
               .Append(RetentionCell(c))
-              .Append(c.Settings != null ? Td(SettingNames.Summary(c.Settings), cls: "small", title: SettingNames.Details(c.Settings)) : Td("—", cls: "muted"))
+              .Append(c.Settings != null ? Td(SettingNames.Summary(c.Settings), cls: "small rec", title: SettingNames.Details(c.Settings)) : Td("—", cls: "muted"))
               .Append(TdDate(c.OldestUtc))
               .Append(TdN(c.BytesByDrive.Count > 0 ? c.BytesByDrive.Count.ToString(Ru) : "—", c.BytesByDrive.Count))
-              .Append("<td>").Append(string.Join(" ", flags)).Append("</td></tr>");
+              .Append("<td class=\"flags\">").Append(string.Join(" ", flags)).Append("</td></tr>");
         }
         sb.Append("</tbody></table></div></section>");
     }
@@ -364,7 +364,7 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
 td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
 .spark{display:inline-block;vertical-align:top;margin:6px 18px 10px 0;width:420px;max-width:100%}.spark svg{width:100%;height:70px;display:block;background:var(--bg);border-radius:6px}.spark .label{font-size:12px;color:var(--muted);margin-bottom:4px}.spark .label b{color:var(--text)}
-td.wrap{white-space:normal;min-width:170px;max-width:260px}td.todo{white-space:normal;min-width:220px;max-width:340px}
+td.wrap{white-space:normal;min-width:170px;max-width:260px}td.camname{white-space:normal;min-width:140px;max-width:230px}td.rec{white-space:normal;min-width:120px;max-width:150px}td.flags{white-space:normal;min-width:90px}td.flags .tag{white-space:nowrap;margin:1px 0}td.todo{white-space:normal;min-width:220px;max-width:340px}
 td.status2{white-space:normal;line-height:1.3;min-width:150px}td.status2 b{color:var(--text);font-weight:600}
 tr.drv{cursor:pointer}tr.drv:hover,tr.drv.open{background:var(--bg)}tr.drv:focus{outline:2px solid var(--accent);outline-offset:-2px}
 tr.detail>td{padding:4px 10px 14px 28px;background:var(--bg);white-space:normal}

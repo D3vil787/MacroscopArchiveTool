@@ -41,7 +41,8 @@ internal sealed class RetireWizard : Form
 
     public RetireWizard(RetireState? existing)
     {
-        _orc = new RetireOrchestrator(_ops, MainForm.StateDir) { LogsDir = Ui.LoadConfig().LogsDir ?? Core.ToolConfig.DefaultLogsDir };
+        var cfg = Ui.LoadConfig();
+        _orc = new RetireOrchestrator(_ops, MainForm.StateDir) { LogsDir = cfg.LogsDir ?? Core.ToolConfig.DefaultLogsDir, ScanCacheDir = cfg.ScanCache ? Core.ScanCache.DefaultDir : null };
         _orc.Logged += line => { if (IsHandleCreated) BeginInvoke(() => AppendLog(line)); };
 
         Text = "Вывод архивного диска из эксплуатации";
@@ -357,6 +358,12 @@ internal sealed class RetireWizard : Form
                     DiscardUnstartedPlan();
                     char src = _source!.Value, tgt = _target!.Value; var kind = _kind; bool allow = _allowActive; var opts = CloneOptions();
                     _state = await Task.Run(() => _orc.Plan(src, kind, tgt, opts, allow));
+                }
+                else
+                {
+                    status.Text = $"Перечитываю последнюю запись и роль диска {_source}:…";
+                    var cur = _state;
+                    await Task.Run(() => _orc.Refresh(cur));
                 }
                 status.Text = "Проверяю условия…";
                 var st = _state!;

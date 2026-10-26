@@ -29,6 +29,8 @@ public sealed class RetireOrchestrator
     public Func<ArchiveCopier> CopierFactory { get; set; } = () => new ArchiveCopier();
     /// <summary>Macroscop log folder and retention source used for the "disk will be empty on …" forecast.</summary>
     public string LogsDir { get; set; } = ToolConfig.DefaultLogsDir;
+    /// <summary>Scan cache for the forecast (repeated checks of a large disk take seconds instead of minutes); null = none.</summary>
+    public string? ScanCacheDir { get; set; }
 
     public RetireOrchestrator(ISystemOps ops, string stateDir) { _ops = ops; _stateDir = stateDir; }
 
@@ -66,6 +68,21 @@ public sealed class RetireOrchestrator
 
     public static long RequiredBytes(long archiveBytes) => (long)(archiveBytes * (1 + SizeMargin)) + MinExtraBytes;
 
+    /// <summary>With the role «Резервный архив» Macroscop no longer records to the disk: an hour of silence is enough.</summary>
+    public static readonly TimeSpan QuietWithReserveRole = TimeSpan.FromHours(1);
+    /// <summary>Role unknown or still recording: a day without new recordings, so a quiet motion camera is not mistaken for a stop.</summary>
+    public static readonly TimeSpan QuietWithoutRole = TimeSpan.FromHours(24);
+
+    internal static bool RoleStopsRecording(string? role) =>
+        role != null && (role.StartsWith("Резервный архив", StringComparison.Ordinal) || role == "Не используется");
+
+    /// <summary>Re-reads the last recording time and the disk role (for «Проверить снова»).</summary>
+    public void Refresh(RetireState s)
+    {
+        Forecast(s);
+        s.Save(_stateDir);
+    }
+
     public List<Check> Precheck(RetireState s)
     {
         var c = new List<Check>();
@@ -76,14 +93,22 @@ public sealed class RetireOrchestrator
         if (s.ArchiveLogicDriveId == null) c.Add(new(CheckLevel.Warning, "Не найден ArchiveLogicDrive.xml — убедитесь, что это архивный диск Macroscop."));
         else c.Add(new(CheckLevel.Ok, $"Архивный диск Macroscop, идентификатор {s.ArchiveLogicDriveId}."));
 
-        if (s.SourceNewestUtc is DateTime newest && newest > DateTime.UtcNow.AddHours(-24))
+        bool roleStopsRecording = RoleStopsRecording(s.SourceRole);
+        var quiet = roleStopsRecording ? QuietWithReserveRole : QuietWithoutRole;
+        string roleText = s.SourceRole != null ? $"Роль в Macroscop — «{s.SourceRole}». " : "";
+        if (s.SourceNewestUtc is DateTime newest && newest > DateTime.UtcNow - quiet)
         {
-            c.Add(new(s.AllowActiveSource ? CheckLevel.Warning : CheckLevel.Error,
-                $"На {s.SourceLetter}: идёт запись (последняя {newest.ToLocalTime():dd.MM.yyyy HH:mm}). " +
-                "Сначала в Конфигураторе Macroscop поставьте диску роль «Резервный архив» и подождите, пока запись прекратится."));
+            var allowedAt = (newest + quiet).ToLocalTime();
+            var text = $"На {s.SourceLetter}: последняя запись {newest.ToLocalTime():dd.MM.yyyy HH:mm}. " + roleText +
+                (roleStopsRecording
+                    ? $"Перенос разрешён, когда с последней записи пройдёт час, — после {allowedAt:dd.MM.yyyy HH:mm}; тогда нажмите «Проверить снова»."
+                    : (s.SourceRole != null ? "Сначала в Конфигураторе Macroscop поставьте диску роль «Резервный архив». " : "") +
+                      $"Для надёжности перенос разрешён, когда с последней записи пройдут сутки, — после {allowedAt:dd.MM.yyyy HH:mm}; тогда нажмите «Проверить снова». " +
+                      "Если роль «Резервный архив» уже стоит и вы уверены, что запись не идёт, включите на шаге «Настройки» «Разрешить перенос, даже если на диск ещё идёт запись».");
+            c.Add(new(s.AllowActiveSource ? CheckLevel.Warning : CheckLevel.Error, text));
         }
         else if (s.SourceNewestUtc is DateTime n2)
-            c.Add(new(CheckLevel.Ok, $"На {s.SourceLetter}: запись не ведётся (последняя {n2.ToLocalTime():dd.MM.yyyy HH:mm})."));
+            c.Add(new(CheckLevel.Ok, $"На {s.SourceLetter}: запись не ведётся (последняя {n2.ToLocalTime():dd.MM.yyyy HH:mm}). {roleText}".TrimEnd()));
 
         var volumes = _ops.GetVolumes();
         var src = volumes.FirstOrDefault(v => v.Letter == s.SourceLetter);
@@ -390,9 +415,14 @@ public sealed class RetireOrchestrator
             var root = ArchiveRoot(s.SourceLetter);
             if (!Directory.Exists(root)) return;
             var names = CameraNames.FromLogsDir(LogsDir);
-            var retention = MacroscopConfig.Load(new[] { root }, names.ServerId);
-            var report = new ArchiveScanner().Scan(new[] { root }, names, new ToolConfig { ScanThreads = 1 }, macroscopRetention: retention);
-            s.SourceNewestUtc = report.Drives.FirstOrDefault()?.NewestUtc;
+            // Configuration backups may live on any archive disk, not only on the one being retired.
+            var configRoots = ArchiveScanner.FindArchiveRoots();
+            if (!configRoots.Contains(root, StringComparer.OrdinalIgnoreCase)) configRoots.Add(root);
+            var retention = MacroscopConfig.Load(configRoots, names.ServerId);
+            var report = new ArchiveScanner { CacheDir = ScanCacheDir }.Scan(new[] { root }, names, new ToolConfig { ScanThreads = 1 }, macroscopRetention: retention);
+            var drive = report.Drives.FirstOrDefault();
+            s.SourceNewestUtc = drive?.NewestUtc;
+            s.SourceRole = drive?.Role;
             s.DrainForecastUtc = report.Cameras
                 .Where(c => c.NewestUtc.HasValue && c.RetentionDays.HasValue)
                 .Select(c => (DateTime?)c.NewestUtc!.Value.AddDays(c.RetentionDays!.Value))
