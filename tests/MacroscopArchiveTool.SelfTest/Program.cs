@@ -27,6 +27,7 @@ var tests = new List<(string Name, Action Body)>
     ("Роли дисков из Server.SrvConf и прогноз опустения", DriveRolesAndDrainForecast),
     ("Потерянные камеры: не пишет, нет архива, удалена, отключена, на другом сервере", LostCameraKinds),
     ("Кэш скана: повторный скан не открывает старые фрагменты и даёт тот же результат", ScanCacheSameResult),
+    ("Камера, удалённая после записи журнала и без архива, не попадает в отчёт", DeletedCameraWithoutArchiveHidden),
 };
 
 int failed = 0;
@@ -258,6 +259,40 @@ static void RetentionFromBackups()
     var bad = MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId);
     Eq(0, bad.ById.Count, "только битая копия — сроков нет");
     True(bad.Warnings.Count == 1 && bad.Warnings[0].Contains("mat.json"), "предупреждение и откат на mat.json");
+}
+
+static void DeletedCameraWithoutArchiveHidden()
+{
+    using var fx = new FakeArchive();
+    const string serverId = "5e7f0000000040008000000000000001";
+    const string parking = "7a1c00000000400080000000000000b2";   // bound in the log (20.10 13:48), not in the configuration, no archive
+    const string unknown = "0123456789abcdef0123456789abcdef";   // has an archive
+    void Backup(string stamp)
+    {
+        var p = Path.Combine(fx.Root1, "ConfigsBackups", stamp, serverId, "ServerConfigs", "ServerConfigs");
+        Directory.CreateDirectory(p);
+        System.IO.File.WriteAllBytes(Path.Combine(p, "SingleServerConfig.CmnConf"), FakeMacroscopConfig.Build(90, 14));
+    }
+    var names = CameraNames.FromLogsDir(fx.Logs);
+    Eq(new DateTime(2026, 10, 20, 13, 48, 11), names.BindingsTimeLocal ?? default, "время списка привязок из журнала");
+    ScanReport Run() => new ArchiveScanner().Scan(new[] { fx.Root1, fx.Root2 }, names, new ToolConfig(),
+                                                  macroscopRetention: MacroscopConfig.Load(new[] { fx.Root1, fx.Root2 }, names.ServerId));
+
+    // Configuration older than the log: we cannot tell whether the camera was added or deleted — keep it, as before.
+    Backup("2026-10-20 12.00.00.000");
+    var before = Run();
+    True(before.Cameras.Any(c => c.Id == parking && c.LostKind == "deleted"), "конфигурация старше журнала — камера остаётся в отчёте");
+
+    // Deleted in the Configurator after the log: newer backup without it, nothing on the disks → not reported, not counted for Zabbix.
+    Backup("2026-10-26 14.05.00.000");
+    var after = Run();
+    True(after.Cameras.All(c => c.Id != parking), "удалённая без архива камера не в отчёте");
+    True(!HtmlReport.Render(new[] { after }).Contains("Парковка 2"), "и не в HTML");
+    var m = System.Text.Json.JsonSerializer.Serialize(MetricsWriter.Build(after));
+    True(!m.Contains("Парковка 2"), "и не в метриках Zabbix");
+    // Everything else is unchanged.
+    True(after.Cameras.Any(c => c.Id == unknown && c.Bytes > 0), "камера с архивом остаётся");
+    Eq(before.Cameras.Count - 1, after.Cameras.Count, "убрана только одна камера");
 }
 
 static void ScanCacheSameResult()

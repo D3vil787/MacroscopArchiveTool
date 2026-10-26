@@ -110,9 +110,12 @@ public sealed class ArchiveScanner
         report.SilentDaysContinuous = config.SilentDaysContinuous;
         report.SilentDaysMotion = config.SilentDaysMotion;
         // Cameras bound to this server that have no recordings at all are "lost" too: add them with zero volume.
+        // Except a camera deleted in the Configurator after the log was written: it is gone from a newer configuration
+        // backup and has nothing on the disks, so there is nothing left to report about it.
         if (report.BindingsRead)
             foreach (var id in names.ServerOf.Keys.Where(names.IsBoundHere))
-                if (!cameras.ContainsKey(id)) cameras[id] = new CameraStat { Id = id };
+                if (!cameras.ContainsKey(id) && !DeletedAfterLog(id, names, macroscopRetention, report.ConfigRead))
+                    cameras[id] = new CameraStat { Id = id };
         foreach (var c in cameras.Values)
         {
             c.Name = names.Get(c.Id) ?? macroscopRetention?.ById.GetValueOrDefault(c.Id)?.Name
@@ -131,6 +134,11 @@ public sealed class ArchiveScanner
         report.ScanSeconds = Math.Round(sw.Elapsed.TotalSeconds, 1);
         return report;
     }
+
+    /// <summary>The configuration was read, is newer than the binding list in the log, and no longer has this camera.</summary>
+    internal static bool DeletedAfterLog(string id, CameraNames names, RetentionSettings? config, bool configRead) =>
+        configRead && config != null && !config.ById.ContainsKey(id)
+        && config.BackupTimeLocal is DateTime backup && names.BindingsTimeLocal is DateTime bound && backup > bound;
 
     internal static void ApplyDriveConfig(List<DriveStat> drives, List<ArchiveDriveConfig> config)
     {

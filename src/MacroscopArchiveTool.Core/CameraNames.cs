@@ -28,6 +28,10 @@ public sealed class CameraNames
     public string? ServerName { get; private set; }
     public string? ServerId { get; private set; }
     public string? SourceFile { get; private set; }
+    /// <summary>When Macroscop wrote the newest channel-binding list to the log (server local time); null = unknown.</summary>
+    public DateTime? BindingsTimeLocal { get; private set; }
+
+    private static readonly Regex LogStamp = new(@"^\[(?<t>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", RegexOptions.Compiled | RegexOptions.Multiline);
 
     /// <summary>Normalizes a GUID to the media-folder form: 32 lowercase hex chars without dashes.</summary>
     public static string Normalize(string id) => id.Replace("-", "").Trim().ToLowerInvariant();
@@ -71,6 +75,16 @@ public sealed class CameraNames
             var id = Normalize(m.Groups["id"].Value);
             ById[id] = m.Groups["name"].Value.Trim();
             if (m.Groups["server"].Success) ServerOf[id] = Normalize(m.Groups["server"].Value);
+        }
+
+        var bindings = text.LastIndexOf("CHANNEL_BINDINGS:", StringComparison.Ordinal);
+        if (bindings >= 0)
+        {
+            Match? stamp = null;
+            foreach (Match m in LogStamp.Matches(text)) { if (m.Index > bindings) break; stamp = m; }
+            if (stamp != null && DateTime.TryParseExact(stamp.Groups["t"].Value, "yyyy-MM-dd HH:mm:ss",
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t))
+                BindingsTimeLocal = t;
         }
 
         var s = ServerLine.Match(text);
