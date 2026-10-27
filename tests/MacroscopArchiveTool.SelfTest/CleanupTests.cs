@@ -10,9 +10,12 @@ partial class Program
         var scan = engine.Scan(o);
         string Cats() => string.Join(", ", scan.Items.Select(i => $"{i.Category}:{i.Title}"));
 
-        var backups = scan.Items.Single(i => i.Category == CleanupCategory.ConfigBackups);
+        var backups = scan.Items.Single(i => i.Category == CleanupCategory.ConfigBackups && i.Key == fx.Backups);
         R.Eq(5, backups.Paths.Count, "старые копии: 15 всего, 10 новейших остаются, из остальных все старше 30 дн.");
         R.True(backups.Paths.All(p => !p.Contains(fx.NewestBackup)), "новейшая копия не трогается");
+        var periodic = scan.Items.Single(i => i.Category == CleanupCategory.ConfigBackups && i.Key == fx.ProgramDataBackups);
+        R.Eq(70 - 60, periodic.Paths.Count, "C:\\ProgramData\\ConfigsBackups: копии раз в 12 ч за 35 дн., остаются все моложе 30 дн.");
+        R.True(periodic.Recommended && periodic.Note.Contains("12 часов"), "копии ProgramData предлагаются с пояснением");
 
         var tablespaces = scan.Items.Single(i => i.Category == CleanupCategory.OldPostgres && i.Action == CleanupAction.Quarantine);
         R.True(tablespaces.Paths.Single().EndsWith("PG_12_201909212"), "папка PG_12 на диске");
@@ -39,6 +42,8 @@ partial class Program
         R.True(Directory.Exists(Path.Combine(fx.Archive, "db", "PG_16_202307071")), "PG_16 на месте");
         R.Eq(11, Directory.GetDirectories(fx.Backups).Length, "осталось 10 новейших копий + посторонняя папка");
         R.True(Directory.Exists(Path.Combine(fx.VolA, CleanupEngine.QuarantineFolder)), "карантин на том же диске");
+        R.Eq(60, Directory.GetDirectories(fx.ProgramDataBackups).Length, "в ProgramData остались копии за 30 дн.");
+        R.True(File.Exists(fx.LiveConfig), "рабочая конфигурация Macroscop не тронута");
 
         var sets = engine.ListQuarantine();
         R.True(sets.Count >= 2 && sets.All(s => s.SetId == sets[0].SetId), "один набор карантина на каждом томе");
@@ -90,6 +95,8 @@ sealed class CleanupFixture : IDisposable
     public string VolC => Path.Combine(Root, "C") + Path.DirectorySeparatorChar;
     public string Archive => Path.Combine(VolA, "MacroscopArchive");
     public string Backups => Path.Combine(Archive, "ConfigsBackups");
+    public string ProgramDataBackups => Path.Combine(VolC, "ProgramData", "ConfigsBackups");
+    public string LiveConfig => Path.Combine(VolC, "ProgramData", "MacroscopServerConfigs", "ServerConfigs", "SingleServerConfig.CmnConf");
     public string NewestBackup = "";
     public readonly string OrphanDb = "archive_event_" + new string('9', 32);
     private const string DriveId = "11111111-2222-3333-4444-555555555555";
@@ -110,6 +117,16 @@ sealed class CleanupFixture : IDisposable
             File.WriteAllBytes(Path.Combine(d, "SingleServerConfig.CmnConf"), new byte[1000]);
         }
         Directory.CreateDirectory(Path.Combine(Backups, "not a backup"));
+        // Macroscop's own periodic copies on the system disk: every 12 hours for 35 days.
+        for (int i = 0; i < 70; i++)
+        {
+            var name = Now.ToLocalTime().AddHours(-12 * i - 1).ToString("yyyy-MM-dd HH.mm.ss.fff");
+            var d = Path.Combine(ProgramDataBackups, name, "server", "ServerConfigs", "ServerConfigs");
+            Directory.CreateDirectory(d);
+            File.WriteAllBytes(Path.Combine(d, "SingleServerConfig.CmnConf"), new byte[1000]);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(LiveConfig)!);
+        File.WriteAllBytes(LiveConfig, new byte[1000]);
 
         Put(Path.Combine(Archive, "db", "PG_12_201909212", "16384", "1"), 500, 300);
         Put(Path.Combine(Archive, "db", "PG_16_202307071", "16384", "1"), 500, 1);

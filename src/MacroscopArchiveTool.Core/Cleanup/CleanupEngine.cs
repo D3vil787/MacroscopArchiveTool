@@ -59,9 +59,15 @@ public sealed class CleanupEngine
     private void ScanBackups(CleanupScan scan, List<string> archives, CleanupOptions o, CancellationToken ct)
     {
         var cutoff = UtcNow().AddDays(-o.BackupDays);
-        foreach (var archive in archives)
+        // Copies on every archive disk (made on each configuration change) and in C:\ProgramData\ConfigsBackups
+        // (made by Macroscop on its own, every 12 hours). Both are only copies: the working configuration lives in
+        // C:\ProgramData\MacroscopServerConfigs and is never touched.
+        var places = archives.Select(a => (Dir: Path.Combine(a, "ConfigsBackups"), Label: VolumeName(a), Periodic: false)).ToList();
+        var programData = Path.GetDirectoryName(_env.MacroscopDataDir.TrimEnd('\\', '/'));
+        if (!string.IsNullOrEmpty(programData))
+            places.Add((Path.Combine(programData, "ConfigsBackups"), Path.Combine(programData, "ConfigsBackups"), true));
+        foreach (var (dir, label, periodic) in places)
         {
-            var dir = Path.Combine(archive, "ConfigsBackups");
             if (!Directory.Exists(dir)) continue;
             var backups = new DirectoryInfo(dir).EnumerateDirectories()
                 .Select(d => (Dir: d, When: ParseBackupTime(d.Name)))
@@ -76,12 +82,12 @@ public sealed class CleanupEngine
                 ct.ThrowIfCancellationRequested();
                 foreach (var f in b.Dir.EnumerateFiles("*", Deep)) { bytes += f.Length; files++; }
             }
-            var vol = VolumeName(archive);
             scan.Items.Add(new CleanupItem
             {
                 Category = CleanupCategory.ConfigBackups, Action = CleanupAction.Quarantine, Recommended = true, Key = dir,
-                Title = $"{vol} — {old.Count} копий из {backups.Count}",
-                Note = $"Остаются {backups.Count - old.Count} самых новых копий (не меньше {o.BackupsToKeep} и все моложе {o.BackupDays} дн.).",
+                Title = $"{label} — {old.Count} копий из {backups.Count}",
+                Note = $"Остаются {backups.Count - old.Count} самых новых копий (не меньше {o.BackupsToKeep} и все моложе {o.BackupDays} дн.)." +
+                       (periodic ? " Сюда Macroscop сам кладёт копию конфигурации каждые 12 часов; рабочая конфигурация лежит в другой папке и не затрагивается." : ""),
                 Paths = old.Select(b => b.Dir.FullName).ToList(), Bytes = bytes, Files = files,
                 OldestUtc = old.Min(b => b.When)!.Value.ToUniversalTime(), NewestUtc = old.Max(b => b.When)!.Value.ToUniversalTime(),
             });
