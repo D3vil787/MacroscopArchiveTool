@@ -34,6 +34,7 @@ internal sealed class MainForm : Form
     {
         Text = $"MacroscopArchiveTool {ToolInfo.Version}";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(980, 600);
         Size = new Size(1100, 680);

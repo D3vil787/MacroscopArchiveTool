@@ -30,6 +30,7 @@ internal sealed class SettingsForm : Form
     {
         Text = "Настройки";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
@@ -154,6 +155,7 @@ internal sealed class WelcomeForm : Form
     {
         Text = "Добро пожаловать";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;

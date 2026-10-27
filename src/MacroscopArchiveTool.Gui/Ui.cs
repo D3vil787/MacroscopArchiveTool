@@ -11,6 +11,19 @@ internal static class Ui
     public static readonly Font Subtitle = new("Segoe UI Semibold", 11f);
     public static readonly Font Small = new("Segoe UI", 9f);
     public static readonly Color Accent = Color.FromArgb(0, 95, 184);
+
+    /// <summary>Program icon for every window (title bar, taskbar, Alt+Tab); the exe itself gets it via ApplicationIcon.</summary>
+    public static readonly Icon? AppIcon = LoadIcon();
+
+    private static Icon? LoadIcon()
+    {
+        try
+        {
+            using var s = typeof(Ui).Assembly.GetManifestResourceStream("app.ico");
+            return s != null ? new Icon(s) : null;
+        }
+        catch (Exception) { return null; }
+    }
     public static readonly Color Muted = Color.FromArgb(96, 96, 96);
     public static readonly Color Ok = Color.FromArgb(16, 124, 16);
     public static readonly Color Warn = Color.FromArgb(157, 93, 0);

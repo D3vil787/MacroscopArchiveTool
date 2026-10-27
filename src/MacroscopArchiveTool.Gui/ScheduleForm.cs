@@ -29,6 +29,7 @@ internal sealed class ScheduleForm : Form
     {
         Text = "Плановый отчёт по архиву";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;

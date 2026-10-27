@@ -37,6 +37,7 @@ internal sealed class CleanupForm : Form
     {
         Text = "Очистка мусора Macroscop";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1100, 820);
         MinimumSize = new Size(860, 640);

@@ -10,6 +10,7 @@
     <Nullable>enable</Nullable>
     <InvariantGlobalization>false</InvariantGlobalization>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- One self-contained exe: no .NET install needed on the Macroscop server. -->
@@ -20,6 +21,10 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="app.ico" LogicalName="app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\MacroscopArchiveTool.Core\MacroscopArchiveTool.Core.csproj" />

@@ -25,6 +25,7 @@ internal sealed class ReportForm : Form
     {
         Text = "Отчёт по архиву";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(860, 560);
         MinimumSize = new Size(600, 400);

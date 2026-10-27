@@ -47,6 +47,7 @@ internal sealed class RetireWizard : Form
 
         Text = "Вывод архивного диска из эксплуатации";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(1040, 780);
         MinimumSize = new Size(900, 640);
@@ -690,6 +691,7 @@ internal sealed class FinishDialog : Form
     {
         Text = "Завершение вывода диска";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;

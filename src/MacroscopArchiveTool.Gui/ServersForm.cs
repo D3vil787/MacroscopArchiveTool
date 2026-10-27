@@ -21,6 +21,7 @@ internal sealed class ServersForm : Form
     {
         Text = "Серверы в отчёте";
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         Size = new Size(820, 520);
         MinimumSize = new Size(640, 420);
@@ -150,6 +151,7 @@ internal sealed class ServerDialog : Form
     {
         Text = string.IsNullOrEmpty(s.Host) ? "Добавить сервер" : "Сервер " + s.Display;
         Font = Ui.Base;
+        if (Ui.AppIcon != null) Icon = Ui.AppIcon;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
