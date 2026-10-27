@@ -439,6 +439,35 @@ public static class MacroscopConfig
         sb.AppendLine().AppendLine($"== Распознано камер: {extracted.Count} ==");
         foreach (var r in extracted.OrderBy(r => r.Name)) sb.AppendLine($"  {r.CameraId}  {r.Name ?? "?"}  мин={r.MinDays} макс={r.MaxDays}");
 
+        // Where in the configuration each camera lives: a camera kept somewhere other than the regular camera list
+        // (a template, a list of removed or archive-only channels…) is not shown in the Configurator.
+        sb.AppendLine().AppendLine("== Где в конфигурации лежит каждая камера (класс ← владелец.поле …) ==");
+        var placed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var o in g.AllObjects())
+        {
+            if (o.ClassName.Contains("Thinning", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!o.Members.Any(m => MinDepth.IsMatch(m.Key)) || !o.Members.Any(m => MaxDepth.IsMatch(m.Key))) continue;
+            var owner = FindOwnerWithId(g, parents, o, out var id);
+            if (owner == null || id == null) continue;
+            var key = CameraNames.Normalize(id.Value.ToString("N"));
+            if (placed.ContainsKey(key)) continue;
+            var chain = new List<string> { Short(owner.ClassName) };
+            var cur = owner;
+            for (int i = 0; i < 5 && parents.TryGetValue(cur.Id, out var ps) && ps.Count > 0; i++)
+            {
+                var p = ps[0];
+                var link = p.Members.FirstOrDefault(m => m.Value is NrbfObject c && c.Id == cur.Id || m.Value is NrbfRef rf && rf.Id == cur.Id).Key ?? "(через массив)";
+                chain.Add($"{Short(p.ClassName)}.{link}" + (ps.Count > 1 ? $" (+{ps.Count - 1})" : ""));
+                cur = p;
+            }
+            placed[key] = string.Join(" ← ", chain);
+        }
+        foreach (var grp in extracted.GroupBy(r => placed.GetValueOrDefault(r.CameraId) ?? "?").OrderByDescending(x => x.Count()))
+        {
+            sb.AppendLine($"-- {grp.Count()} шт.: {grp.Key}");
+            foreach (var r in grp.OrderBy(r => r.Name)) sb.AppendLine($"     {r.CameraId}  {r.Name ?? "?"}");
+        }
+
         sb.AppendLine().AppendLine("== Настройки записи камер (коды) ==");
         sb.AppendLine("вкл | режим | поток | кодек | лимит fps | детектор Macroscop/камеры | пред/пост, с | прореж. | fps (свой?) | разрешение (свой?) | камера");
         foreach (var r in extracted.OrderBy(r => r.Name))
