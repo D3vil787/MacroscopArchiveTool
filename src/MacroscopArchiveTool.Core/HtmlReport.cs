@@ -217,7 +217,10 @@ public static class HtmlReport
                 _ => ("запись в архив выключена", "Только живое видео. Если камера не нужна — удалите её из Конфигуратора."),
             };
             var cls = c.LostKind is "no-archive" or "silent" ? " class=\"rowwarn\"" : "";
-            sb.Append("<tr").Append(cls).Append('>').Append(Td(c.Name, cls: "strong", title: CameraNames.ToDashedGuid(c.Id) ?? c.Id));
+            // GUID under the name, selectable and copyable by a click: needed to find the camera in the Configurator or in dump-config.
+            var guid = CameraNames.ToDashedGuid(c.Id) ?? c.Id;
+            sb.Append("<tr").Append(cls).Append("><td class=\"strong camname\">").Append(H(c.Name))
+              .Append("<div class=\"guid\" title=\"Щёлкните, чтобы скопировать\">").Append(H(guid)).Append("</div></td>");
             if (multi) sb.Append(Td(r.ServerName));
             sb.Append("<td class=\"wrap\">").Append(H(what)).Append("</td>").Append(TdDate(c.NewestUtc, withTime: true))
               .Append(TdN(c.SilentDays is double sd ? sd.ToString("0", Ru) + " дн." : "—", c.SilentDays ?? 99999))
@@ -364,7 +367,7 @@ tr.rowbad{background:var(--bad-bg)}tr.rowwarn{background:var(--warn-bg)}.tag{dis
 #filter{width:100%;max-width:360px;padding:7px 10px;margin:4px 0 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
 td.small{font-size:12px;color:var(--muted)}.notes ul{margin:0;padding-left:20px}.notes li{margin:4px 0}
 .spark{display:inline-block;vertical-align:top;margin:6px 18px 10px 0;width:420px;max-width:100%}.spark svg{width:100%;height:70px;display:block;background:var(--bg);border-radius:6px}.spark .label{font-size:12px;color:var(--muted);margin-bottom:4px}.spark .label b{color:var(--text)}
-td.wrap{white-space:normal;min-width:170px;max-width:260px}td.camname{white-space:normal;min-width:140px;max-width:230px}td.rec{white-space:normal;min-width:120px;max-width:150px}td.flags{white-space:normal;min-width:90px}td.flags .tag{white-space:nowrap;margin:1px 0}td.todo{white-space:normal;min-width:220px;max-width:340px}
+td.wrap{white-space:normal;min-width:170px;max-width:260px}.guid{font-family:Consolas,monospace;font-size:11px;font-weight:400;color:var(--muted);cursor:copy;user-select:all;white-space:nowrap}.guid.copied{color:var(--ok)}td.camname{white-space:normal;min-width:140px;max-width:230px}td.rec{white-space:normal;min-width:120px;max-width:150px}td.flags{white-space:normal;min-width:90px}td.flags .tag{white-space:nowrap;margin:1px 0}td.todo{white-space:normal;min-width:220px;max-width:340px}
 td.status2{white-space:normal;line-height:1.3;min-width:150px}td.status2 b{color:var(--text);font-weight:600}
 tr.drv{cursor:pointer}tr.drv:hover,tr.drv.open{background:var(--bg)}tr.drv:focus{outline:2px solid var(--accent);outline-offset:-2px}
 tr.detail>td{padding:4px 10px 14px 28px;background:var(--bg);white-space:normal}
@@ -375,6 +378,15 @@ tr.day{cursor:pointer}tr.day:hover,tr.day.open{background:var(--panel)}tr.camrow
 """;
 
     private const string Js = """
+document.querySelectorAll('.guid').forEach(function(g){
+  g.addEventListener('click',function(e){
+    e.stopPropagation();
+    var text=g.textContent, done=function(){g.classList.add('copied');var o=g.textContent;g.textContent='скопировано';setTimeout(function(){g.textContent=o;g.classList.remove('copied');},1200);};
+    try{ if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(done,fallback);return;} }catch(x){}
+    fallback();
+    function fallback(){var t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();try{document.execCommand('copy');done();}catch(x){}document.body.removeChild(t);}
+  });
+});
 document.querySelectorAll('table.sortable').forEach(function(t){
   t.querySelectorAll('th').forEach(function(th,i){
     function sort(){
