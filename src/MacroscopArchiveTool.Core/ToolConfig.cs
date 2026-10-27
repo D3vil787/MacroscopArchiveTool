@@ -37,6 +37,8 @@ public sealed class ToolConfig
 
     /// <summary>Look for a new version on GitHub when the window opens.</summary>
     public bool CheckUpdates { get; set; } = true;
+    /// <summary>While the window stays open, look again every this many hours (0 = only at start).</summary>
+    public int UpdateCheckHours { get; set; } = 6;
 
     public const string DefaultLogsDir = @"C:\ProgramData\Macroscop\Logs_Macroscop";
 

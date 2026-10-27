@@ -121,6 +121,15 @@ internal sealed class MainForm : Form
         FormClosing += OnMainClosing;
         _idleTimer.Tick += (_, _) => UpdateLive();
         _idleTimer.Start();
+        // The window often stays open for days on the server: look for a new version periodically, not only at start.
+        _updateTimer.Tick += async (_, _) =>
+        {
+            var cfg = Ui.LoadConfig();
+            if (!cfg.CheckUpdates || cfg.UpdateCheckHours <= 0) return;
+            if (DateTime.UtcNow - _lastUpdateCheckUtc < TimeSpan.FromHours(cfg.UpdateCheckHours)) return;
+            await CheckUpdatesAsync(manual: false);
+        };
+        _updateTimer.Start();
     }
 
     private static Control Card(string title, string text, string button, EventHandler onClick, params (string Text, Action Click)[] links)
@@ -245,19 +254,28 @@ internal sealed class MainForm : Form
     private readonly Button _updateButton;
     private readonly LinkLabel _notesLink;
     private UpdateInfo? _update;
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 10 * 60 * 1000 };
+    private DateTime _lastUpdateCheckUtc;
+    private bool _checkingUpdates;
 
     private async Task CheckUpdatesAsync(bool manual)
     {
+        if (_checkingUpdates || !_updateButton.Enabled) return;   // a check or an installation is already running
+        _checkingUpdates = true;
+        _lastUpdateCheckUtc = DateTime.UtcNow;
         try
         {
-            _update = await Updater.CheckAsync(CancellationToken.None);
-            if (_update == null)
+            var found = await Updater.CheckAsync(CancellationToken.None);
+            if (found == null)
             {
                 if (manual) Ui.Info(this, $"Установлена последняя версия ({ToolInfo.Version}).");
                 return;
             }
+            bool fresh = _update?.Version != found.Version;
+            _update = found;
             _updateText.Text = $"Доступна новая версия {_update.Version} (у вас {ToolInfo.Version})";
             _banner.Visible = true;
+            if (fresh && !manual && WindowState == FormWindowState.Minimized) FlashTaskbar();
         }
         catch (Exception ex)
         {
@@ -265,6 +283,23 @@ internal sealed class MainForm : Form
             if (manual) Ui.Error(this, "Не удалось проверить обновления: " + ex.Message +
                                        $"\n\nНовую версию можно скачать вручную: https://github.com/{Updater.Repository}/releases");
         }
+        finally { _checkingUpdates = false; }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct FLASHWINFO { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool FlashWindowEx(ref FLASHWINFO info);
+
+    /// <summary>Blinks the taskbar button until the window is opened (FLASHW_TRAY | FLASHW_TIMERNOFG).</summary>
+    private void FlashTaskbar()
+    {
+        try
+        {
+            var fi = new FLASHWINFO { hwnd = Handle, dwFlags = 2 | 12, uCount = uint.MaxValue };
+            fi.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(fi);
+            FlashWindowEx(ref fi);
+        }
+        catch (Exception) { /* cosmetic */ }
     }
 
     private async Task InstallUpdateAsync()

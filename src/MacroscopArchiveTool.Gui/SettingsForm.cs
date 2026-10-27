@@ -23,7 +23,8 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox _cache = new() { Text = "Запоминать уже прочитанные папки архива (повторный отчёт в разы быстрее)", AutoSize = true };
     private readonly TextBox _roots = new() { Width = 560 };
     private readonly TextBox _logs = new() { Width = 560 };
-    private readonly CheckBox _updates = new() { Text = "Проверять обновления на GitHub при запуске", AutoSize = true };
+    private readonly CheckBox _updates = new() { Text = "Проверять обновления на GitHub: при запуске и затем каждые", AutoSize = true };
+    private readonly NumericUpDown _updateHours = Num(1, 168, 0);
 
     public SettingsForm()
     {
@@ -52,6 +53,9 @@ internal sealed class SettingsForm : Form
         _logs.Text = _cfg.LogsDir ?? "";
         _logs.PlaceholderText = ToolConfig.DefaultLogsDir;
         _updates.Checked = _cfg.CheckUpdates;
+        _updateHours.Value = Math.Clamp(_cfg.UpdateCheckHours <= 0 ? 6 : _cfg.UpdateCheckHours, 1, 168);
+        _updateHours.Enabled = _updates.Checked;
+        _updates.CheckedChanged += (_, _) => _updateHours.Enabled = _updates.Checked;
 
         var p = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Padding = new Padding(22, 16, 22, 16) };
         p.Controls.Add(Ui.Text("Настройки", Ui.Title));
@@ -76,7 +80,8 @@ internal sealed class SettingsForm : Form
         p.Controls.Add(_logs);
 
         p.Controls.Add(Section("Обновления"));
-        p.Controls.Add(_updates);
+        p.Controls.Add(Ui.Row(_updates, _updateHours, Ui.Text("ч, пока окно открыто")));
+        p.Controls.Add(Ui.Text("Если найдена новая версия, сверху появится полоса «Обновить»; ставится она только по вашей кнопке.", Ui.Small, Ui.Muted, 600));
 
         var save = Ui.Button("Сохранить", (_, _) => Save());
         var cancel = Ui.Button("Отмена", (_, _) => Close());
@@ -121,6 +126,7 @@ internal sealed class SettingsForm : Form
         _cfg.ArchiveRoots = roots;
         _cfg.LogsDir = _logs.Text.Trim().Length > 0 ? _logs.Text.Trim() : null;
         _cfg.CheckUpdates = _updates.Checked;
+        _cfg.UpdateCheckHours = (int)_updateHours.Value;
         try
         {
             _cfg.Save(ConfigPath);
