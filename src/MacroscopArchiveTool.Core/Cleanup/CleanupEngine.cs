@@ -21,6 +21,9 @@ public sealed class CleanupEngine
 
     private readonly ICleanupEnvironment _env;
     public Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
+    /// <summary>How long to wait for the PostgreSQL uninstaller to let go of its program folder.</summary>
+    public int UninstallRetries { get; set; } = 12;
+    public TimeSpan UninstallRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
     public CleanupEngine(ICleanupEnvironment env) { _env = env; }
 
@@ -169,7 +172,21 @@ public sealed class CleanupEngine
             if (s.InstallDir != null && Directory.Exists(s.InstallDir) && !Overlaps(s.InstallDir, active)) paths.Add(s.InstallDir);
             if (paths.Count == 0 && s.Name.Length == 0) continue;
             long bytes = 0; int files = 0; DateTime? newest = null;
-            foreach (var p in paths) { var (b, f, _, n) = Measure(p); bytes += b; files += f; newest = ArchiveScanner.Max(newest, n); }
+            try { foreach (var p in paths) { var (b, f, _, n) = Measure(p); bytes += b; files += f; newest = ArchiveScanner.Max(newest, n); } }
+            catch (UnauthorizedAccessException)
+            {
+                // Typical right after the uninstaller: Windows is still deleting the folder (and the service is only marked
+                // for deletion). Nothing to do but wait for a restart — show it, do not offer it.
+                scan.Items.Add(new CleanupItem
+                {
+                    Category = CleanupCategory.OldPostgres, Action = CleanupAction.ShowOnly, Key = "pending-" + s.Version,
+                    Title = $"PostgreSQL {s.Version}: удаление не завершено",
+                    Note = "Папка программы недоступна — обычно это значит, что Windows уже удаляет её после деинсталлятора, а служба " +
+                           "помечена на удаление. Всё завершится после перезагрузки сервера (или закрытия консоли «Службы»); потом проверьте снова.",
+                    Paths = paths,
+                });
+                continue;
+            }
             scan.Items.Add(new CleanupItem
             {
                 Category = CleanupCategory.OldPostgres, Action = CleanupAction.UninstallPostgres, Recommended = true, Key = "install-" + s.Version,
@@ -283,7 +300,23 @@ public sealed class CleanupEngine
                 foreach (var path in item.Paths.Where(p => Directory.Exists(p) || File.Exists(p)))
                 {
                     var vol = VolumeOf(path);
-                    MoveToQuarantine(Set(sets, vol, setId), vol, path, item.Category);
+                    if (item.Action != CleanupAction.UninstallPostgres) { MoveToQuarantine(Set(sets, vol, setId), vol, path, item.Category); continue; }
+                    // The PostgreSQL uninstaller keeps deleting its own folder for a while after it exits.
+                    for (int attempt = 1; ; attempt++)
+                    {
+                        if (!Directory.Exists(path) && !File.Exists(path)) { Say($"  {path}: удалена деинсталлятором."); break; }
+                        try { MoveToQuarantine(Set(sets, vol, setId), vol, path, item.Category); break; }
+                        catch (Exception ex) when ((ex is UnauthorizedAccessException or IOException) && attempt < UninstallRetries)
+                        {
+                            Thread.Sleep(UninstallRetryDelay);
+                        }
+                        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                        {
+                            Say($"  {path}: Windows ещё удаляет папку после деинсталлятора — она исчезнет после перезагрузки сервера.");
+                            Set(sets, vol, setId).Notes.Add($"{path}: удаление завершится после перезагрузки.");
+                            break;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
