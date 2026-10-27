@@ -336,6 +336,40 @@ public static class MacroscopConfig
         return null;
     }
 
+    /// <summary>
+    /// Camera ids whose channel object is reachable from ChannelsConfig.rootSecObject (the Configurator's folder tree),
+    /// or null if there is no such tree. The walk does not go back up into the configuration roots.
+    /// </summary>
+    internal static HashSet<string>? CamerasInTree(NrbfGraph g, Dictionary<string, int> ownerIds)
+    {
+        var holder = g.AllObjects().FirstOrDefault(o => o.ClassName.EndsWith("ChannelsConfig", StringComparison.Ordinal)
+                                                        && o.Members.Any(m => m.Key == "rootSecObject"));
+        if (holder == null) return null;
+        var visited = new HashSet<int>();
+        var reached = new HashSet<int>();
+        var stack = new Stack<object?>();
+        stack.Push(holder.Members.First(m => m.Key == "rootSecObject").Value);
+        while (stack.Count > 0)
+        {
+            var v = stack.Pop();
+            if (v is NrbfRef r) v = g.ById.GetValueOrDefault(r.Id);
+            switch (v)
+            {
+                case NrbfObject o:
+                    if (!visited.Add(o.Id)) break;
+                    if (o.ClassName.EndsWith("ChannelsConfig", StringComparison.Ordinal) || o.ClassName.EndsWith("CommonConfig", StringComparison.Ordinal)) break;
+                    reached.Add(o.Id);
+                    foreach (var m in o.Members) stack.Push(m.Value);
+                    break;
+                case NrbfArray a:
+                    if (!visited.Add(a.Id)) break;
+                    foreach (var it in a.Items) stack.Push(it);
+                    break;
+            }
+        }
+        return ownerIds.Where(kv => reached.Contains(kv.Value)).Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>child object id → objects that reference it (directly or through an array).</summary>
     private static Dictionary<int, List<NrbfObject>> BuildParents(NrbfGraph g)
     {
@@ -443,6 +477,7 @@ public static class MacroscopConfig
         // (a template, a list of removed or archive-only channels…) is not shown in the Configurator.
         sb.AppendLine().AppendLine("== Где в конфигурации лежит каждая камера (класс ← владелец.поле …) ==");
         var placed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var ownerIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var o in g.AllObjects())
         {
             if (o.ClassName.Contains("Thinning", StringComparison.OrdinalIgnoreCase)) continue;
@@ -461,12 +496,22 @@ public static class MacroscopConfig
                 cur = p;
             }
             placed[key] = string.Join(" ← ", chain);
+            ownerIds[key] = owner.Id;
         }
         foreach (var grp in extracted.GroupBy(r => placed.GetValueOrDefault(r.CameraId) ?? "?").OrderByDescending(x => x.Count()))
         {
             sb.AppendLine($"-- {grp.Count()} шт.: {grp.Key}");
             foreach (var r in grp.OrderBy(r => r.Name)) sb.AppendLine($"     {r.CameraId}  {r.Name ?? "?"}");
         }
+
+        // The Configurator shows cameras through the folder tree (ChannelsConfig.rootSecObject). A camera present in the
+        // channel list but not hanging anywhere in that tree exists for the server, yet cannot be found in the Configurator.
+        var inTree = CamerasInTree(g, ownerIds);
+        sb.AppendLine().AppendLine(inTree == null
+            ? "== Дерево камер Конфигуратора (rootSecObject) не найдено =="
+            : $"== Камеры вне дерева Конфигуратора (rootSecObject): {extracted.Count(r => !inTree.Contains(r.CameraId))} из {extracted.Count} ==");
+        if (inTree != null)
+            foreach (var r in extracted.Where(r => !inTree.Contains(r.CameraId)).OrderBy(r => r.Name)) sb.AppendLine($"  {r.CameraId}  {r.Name ?? "?"}");
 
         sb.AppendLine().AppendLine("== Настройки записи камер (коды) ==");
         sb.AppendLine("вкл | режим | поток | кодек | лимит fps | детектор Macroscop/камеры | пред/пост, с | прореж. | fps (свой?) | разрешение (свой?) | камера");
