@@ -1,4 +1,6 @@
-﻿using System.Text;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using MacroscopArchiveTool.Core;
 
 // Dependency-free test runner (NuGet is not always reachable from the build sandbox).
@@ -11,6 +13,7 @@ var tests = new List<(string Name, Action Body)>
     ("JSON туда-обратно и сводный HTML", JsonAndHtml),
     ("NRBF: сроки камер из бинарной конфигурации", NrbfRetention),
     ("Настройки записи: fps камеры в столбце «Запись» и в подсказке", SettingsFpsText),
+    ("Настройки записи: опрос ISAPI с Digest-авторизацией", CameraProbeDigest),
     ("NRBF: дамп структуры без паролей", NrbfDumpHidesSecrets),
     ("Сроки из ConfigsBackups: новейшая копия, приоритет mat.json", RetentionFromBackups),
     ("Перенос: полная копия, время файлов, манифест, повторный запуск", CopyFullAndRerun),
@@ -175,8 +178,7 @@ static void NrbfRetention()
     Eq(7, s.PostRecordSec ?? 0, "постзапись");
     Eq(false, s.UsesCameraFps ?? true, "свой fps");
     Eq(15.0, s.Fps ?? 0, "fps из Macroscop");
-    Eq(10.0, s.ArchiveStreamFps ?? 0, "fps потока в архиве (альтернативный)");
-    Eq("постоянно · альтернативный поток · MPEG-4 Part 2 · 15 к/с · архив ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
+    Eq("постоянно · альтернативный поток · MPEG-4 Part 2 · 15 к/с · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
     var tree = MacroscopConfig.DumpTree(WriteTemp(FakeMacroscopConfig.Build(90, 14)));
     True(tree.Contains("== Корневой объект ==") && tree.Contains("secChannels"), "дерево файла конфигурации");
     True(!tree.Contains(FakeMacroscopConfig.Secret), "пароль не попал в дерево");
@@ -194,33 +196,75 @@ static void NrbfRetention()
 
 static void SettingsFpsText()
 {
+    // The camera uses its own frame rate: Macroscop's stored "10" is a placeholder, the probe value wins.
+    var fromCamera = new CameraSettings
+    {
+        ArchiveEnabled = true, ArchiveMode = 1, ArchiveStream = 0, StreamFormat = 4,
+        UsesCameraFps = true, Fps = 10, ProbedFps = 15, FpsSource = CameraProbe.SourceIsapi,
+    };
+    Eq("по движению · основной поток · H.265 · 15 к/с", SettingNames.Summary(fromCamera), "fps из камеры в столбце «Запись»");
+    True(SettingNames.Details(fromCamera).Contains("Частота кадров: 15 к/с (из камеры, ISAPI)"), "источник fps — камера");
+
+    var report = new ScanReport { ServerName = "Сервер", MachineName = "SRV" };
+    report.Cameras.Add(new CameraStat { Id = "00000000000000000000000000000001", Name = "Камера", Settings = fromCamera, BytesPerDay = 1 });
+    var html = HtmlReport.Render(new[] { report });
+    True(html.Contains("H.265 · 15 к/с"), "fps виден в отчёте без наведения курсора");
+    True(html.Contains("Частота кадров: 15 к/с (из камеры, ISAPI)"), "fps с источником в подсказке");
+    True(!html.Contains("10 к/с"), "заглушка Macroscop не показывается");
+
+    // Macroscop's own value is only shown when it is actually used.
     var fromMacroscop = new CameraSettings
     {
         ArchiveEnabled = true, ArchiveMode = 2, ArchiveStream = 0, StreamFormat = 3,
-        UsesCameraFps = false, Fps = 25, ArchiveStreamFps = 12,
+        UsesCameraFps = false, Fps = 25,
     };
-    Eq("постоянно · основной поток · H.264 · 25 к/с", SettingNames.Summary(fromMacroscop), "fps камеры в столбце «Запись»");
-    True(SettingNames.Details(fromMacroscop).Contains("Частота кадров: 25 к/с (задана в Macroscop)"), "fps и источник в подсказке");
+    Eq("постоянно · основной поток · H.264 · 25 к/с", SettingNames.Summary(fromMacroscop), "fps из Macroscop");
+    True(SettingNames.Details(fromMacroscop).Contains("Частота кадров: 25 к/с (задана в Macroscop)"), "fps Macroscop в подсказке");
 
-    var report = new ScanReport { ServerName = "Сервер", MachineName = "SRV" };
-    report.Cameras.Add(new CameraStat { Id = "00000000000000000000000000000001", Name = "Камера", Settings = fromMacroscop, BytesPerDay = 1 });
-    var html = HtmlReport.Render(new[] { report });
-    True(html.Contains("H.264 · 25 к/с"), "fps виден в отчёте без наведения курсора");
-    True(html.Contains("Частота кадров: 25 к/с (задана в Macroscop)"), "fps с источником во всплывающей подсказке");
+    // The camera did not answer: nothing is invented, the tooltip explains it.
+    var noAnswer = new CameraSettings { ArchiveEnabled = true, ArchiveMode = 2, UsesCameraFps = true, Fps = 10, FpsSource = CameraProbe.SourceIsapiFailed };
+    True(!SettingNames.Summary(noAnswer).Contains("к/с"), "без ответа камеры число не выдумывается");
+    True(SettingNames.Details(noAnswer).Contains("Частота кадров: из настроек камеры (камера не ответила)"), "причина в подсказке");
 
-    // "Использовать частоту кадров камеры": Macroscop's own value is not used, the archived stream's fps is shown.
-    var fromCamera = new CameraSettings
+    // Hikvision ISAPI: maxFrameRate is in 1/100 fps.
+    True(CameraProbe.TryParseHikvisionFps("<StreamingChannel><Video><maxFrameRate>1500</maxFrameRate></Video></StreamingChannel>", out var fps) && Math.Abs(fps - 15) < 0.001, "ISAPI: 1500 = 15 к/с");
+    True(CameraProbe.TryParseHikvisionFps("<Video><frameRate>25</frameRate></Video>", out var direct) && Math.Abs(direct - 25) < 0.001, "ISAPI: frameRate напрямую");
+    True(!CameraProbe.TryParseHikvisionFps("<html>404</html>", out _), "ISAPI: не XML потока — без fps");
+}
+
+static void CameraProbeDigest()
+{
+    var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+    var server = Task.Run(async () =>
     {
-        ArchiveEnabled = true, ArchiveMode = 1, ArchiveStream = 1, StreamFormat = 4,
-        UsesCameraFps = true, Fps = 0, ArchiveStreamFps = 8,
-    };
-    Eq("по движению · альтернативный поток · H.265 · 8 к/с", SettingNames.Summary(fromCamera), "fps из настроек камеры");
-    True(SettingNames.Details(fromCamera).Contains("Частота кадров: 8 к/с (из настроек камеры)"), "источник fps — камера");
+        try
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                using var client = await listener.AcceptTcpClientAsync();
+                using var stream = client.GetStream();
+                using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
+                await reader.ReadLineAsync();                    // request line
+                string? line;
+                while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync())) { }
+                var body = "<StreamingChannel><Video><maxFrameRate>1500</maxFrameRate></Video></StreamingChannel>";
+                var response = attempt == 0
+                    ? "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Digest realm=\"IP Camera\", qop=\"auth\", nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    : $"HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: {Encoding.ASCII.GetByteCount(body)}\r\nConnection: close\r\n\r\n{body}";
+                var bytes = Encoding.ASCII.GetBytes(response);
+                await stream.WriteAsync(bytes);
+                await stream.FlushAsync();
+            }
+        }
+        catch (Exception) { /* listener stopped after the probe */ }
+    });
 
-    // Neither the camera setting nor the stream parameters carry a number: nothing is invented.
-    var unknown = new CameraSettings { ArchiveEnabled = true, ArchiveMode = 2, UsesCameraFps = true };
-    True(!SettingNames.Summary(unknown).Contains("к/с"), "без числа в конфигурации fps не выдумывается");
-    True(SettingNames.Details(unknown).Contains("Частота кадров: неизвестна (из настроек камеры)"), "неизвестный fps в подсказке");
+    var fps = CameraProbe.HikvisionFpsAsync($"127.0.0.1:{port}", "admin", "pass", 1, 5000, default).GetAwaiter().GetResult();
+    listener.Stop();
+    try { server.Wait(TimeSpan.FromSeconds(3)); } catch (Exception) { }
+    Eq(15.0, fps ?? 0, "ISAPI через Digest: 1500 = 15 к/с");
 }
 
 static string WriteTemp(byte[] data)

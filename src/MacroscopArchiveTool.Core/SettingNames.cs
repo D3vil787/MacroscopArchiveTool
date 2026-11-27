@@ -23,26 +23,35 @@ public static class SettingNames
     public static string Format(int? code) => Code(StreamFormats, code, "кодек");
 
     /// <summary>
-    /// FPS at which the camera works now: Macroscop's "Частота кадров" setting, or the fps of the stream written to
-    /// the archive when the camera's own frame rate is used (isUsingCamFrameRateSetting).
+    /// FPS to show: the value measured on the camera when it answered, otherwise Macroscop's own
+    /// "Частота кадров" setting, which is only meaningful when "use the camera's frame rate" is off.
     /// </summary>
-    public static double? Fps(CameraSettings s) => s.UsesCameraFps == true
-        ? Positive(s.ArchiveStreamFps) ?? Positive(s.Fps)
-        : Positive(s.Fps) ?? Positive(s.ArchiveStreamFps);
+    public static double? EffectiveFps(CameraSettings s)
+        => Positive(s.ProbedFps) ?? (s.UsesCameraFps == true ? null : Positive(s.Fps));
 
     private static double? Positive(double? v) => v is double d && d > 0 ? d : null;
     private static string Number(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
-    private static string FpsText(CameraSettings s) => Fps(s) is double f ? $"{Number(f)} к/с" : "неизвестна";
 
     /// <summary>One-line summary for the report table.</summary>
     public static string Summary(CameraSettings s)
     {
         if (s.ArchiveEnabled == false) return "запись выключена";
         var parts = new List<string> { Mode(s.ArchiveMode), Stream(s.ArchiveStream), Format(s.StreamFormat) };
-        if (Fps(s) is double fps) parts.Add($"{Number(fps)} к/с");
-        if (s.ArchiveFpsLimitEnabled == true && s.ArchiveFpsLimit is double f) parts.Add($"архив ≤{Number(f)} к/с");
+        if (EffectiveFps(s) is double fps) parts.Add($"{Number(fps)} к/с");
+        if (s.ArchiveFpsLimitEnabled == true && s.ArchiveFpsLimit is double f) parts.Add($"≤{Number(f)} к/с");
         if (s.ThinningEnabled == true) parts.Add("прореживание");
         return string.Join(" · ", parts);
+    }
+
+    /// <summary>Where the fps came from — or why there is no number.</summary>
+    private static string FpsText(CameraSettings s)
+    {
+        if (Positive(s.ProbedFps) is double probed) return $"{Number(probed)} к/с (из камеры, ISAPI)";
+        if (s.UsesCameraFps == true)
+            return s.FpsSource == CameraProbe.SourceIsapiFailed
+                ? "из настроек камеры (камера не ответила)"
+                : "из настроек камеры";
+        return Positive(s.Fps) is double own ? $"{Number(own)} к/с (задана в Macroscop)" : "?";
     }
 
     /// <summary>Multi-line details for a tooltip.</summary>
@@ -59,7 +68,7 @@ public static class SettingNames
             $"Детектор движения Macroscop: {YN(s.MacroscopMotionDetector)}, детектор камеры: {YN(s.CameraMotionDetector)}",
             $"Предзапись/постзапись: {s.PreRecordSec?.ToString() ?? "?"}/{s.PostRecordSec?.ToString() ?? "?"} с",
             $"Прореживание архива: {YN(s.ThinningEnabled)}",
-            $"Частота кадров: {FpsText(s)} ({(s.UsesCameraFps == true ? "из настроек камеры" : "задана в Macroscop")})",
+            $"Частота кадров: {FpsText(s)}",
             s.UsesCameraResolution == true ? "Разрешение: из настроек камеры" : $"Разрешение: код {s.ResolutionCode?.ToString() ?? "?"} (задано в Macroscop)",
         };
         return string.Join("\n", lines);

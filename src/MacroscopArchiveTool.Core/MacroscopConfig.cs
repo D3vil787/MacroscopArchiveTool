@@ -10,6 +10,17 @@ public sealed record CameraRetention(string CameraId, string? Name, double? MinD
 {
     /// <summary>Recording settings of the same camera, when the config carries them.</summary>
     public CameraSettings? Settings { get; init; }
+
+    /// <summary>
+    /// Camera address and credentials from the configuration. Used only to ask the camera for its frame rate;
+    /// never written to reports or logs.
+    /// </summary>
+    public string? Ip { get; init; }
+    public string? Login { get; init; }
+    public string? Password { get; init; }
+
+    /// <summary>Never prints the credentials.</summary>
+    public override string ToString() => $"{CameraId} {Name}";
 }
 
 /// <summary>
@@ -32,8 +43,10 @@ public sealed class CameraSettings
     public bool? UsesCameraFps { get; set; }
     /// <summary>Macroscop's "Частота кадров" setting (liveFrameRate) — the fps the camera is set to work at.</summary>
     public double? Fps { get; set; }
-    /// <summary>FPS of the stream written to the archive, from that stream's own parameters (what the camera sends in it).</summary>
-    public double? ArchiveStreamFps { get; set; }
+    /// <summary>FPS the camera itself reported when asked (see <see cref="CameraProbe"/>); null when unknown.</summary>
+    public double? ProbedFps { get; set; }
+    /// <summary>"isapi" when <see cref="ProbedFps"/> came from the camera, "isapi-failed" when the camera did not answer.</summary>
+    public string? FpsSource { get; set; }
     public bool? UsesCameraResolution { get; set; }
     public int? ResolutionCode { get; set; }
     /// <summary>"Камера активна" switched off in the Configurator.</summary>
@@ -248,6 +261,9 @@ public static class MacroscopConfig
                 new CameraRetention(CameraNames.Normalize(id.Value.ToString("N")), name, ToDouble(g.Resolve(min.Value)), ToDouble(g.Resolve(max.Value)))
                 {
                     Settings = ReadSettings(g, o.Members.Any(m => m.Key == "archiveMode") ? o : owner),
+                    Ip = g.Resolve(owner["ip"]) as string,
+                    Login = g.Resolve(owner["login"]) as string,
+                    Password = g.Resolve(owner["password"]) as string,
                 };
         }
         return found.Values.ToList();
@@ -280,7 +296,6 @@ public static class MacroscopConfig
             ThinningEnabled = ThinningOn(g, M("_archiveThinningSettings")),
             UsesCameraFps = B("isUsingCamFrameRateSetting"),
             Fps = ToDouble(M("liveFrameRate")),
-            ArchiveStreamFps = SubstreamFps(g, archivedSubstream),
             UsesCameraResolution = B("isUsingCamResolutionSetting"),
             ResolutionCode = E("videoResolution"),
             Disabled = B("isDisabled"),
@@ -289,10 +304,6 @@ public static class MacroscopConfig
 
     private static int? SubstreamFormat(NrbfGraph g, object? substream)
         => g.Resolve(substream) is NrbfObject s ? EnumCode(g, s["streamFormat"]) : null;
-
-    /// <summary>FPS of a stream as stored in its own parameters (what the camera sends in that stream).</summary>
-    private static double? SubstreamFps(NrbfGraph g, object? substream)
-        => g.Resolve(substream) is NrbfObject s ? ToDouble(g.Resolve(s["liveFrameRate"])) : null;
 
     /// <summary>Enum values are serialized as an object with a single "value__" member.</summary>
     internal static int? EnumCode(NrbfGraph g, object? v)

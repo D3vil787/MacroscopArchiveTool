@@ -35,6 +35,18 @@ public sealed class ToolConfig
     /// <summary>The same for motion recording (a quiet scene may really have no motion for a while).</summary>
     public double SilentDaysMotion { get; set; } = 7;
 
+    /// <summary>
+    /// Ask cameras for their real frame rate (Hikvision ISAPI) using the address and credentials from the
+    /// Macroscop configuration. Read-only GET; cameras that do not answer are skipped.
+    /// </summary>
+    public bool ProbeCameraFps { get; set; } = true;
+    /// <summary>How long a probed frame rate is reused before asking the camera again.</summary>
+    public int CameraFpsCacheHours { get; set; } = 168;
+    /// <summary>Per-camera probe timeout, milliseconds.</summary>
+    public int CameraProbeTimeoutMs { get; set; } = 3000;
+    /// <summary>How many cameras are asked in parallel.</summary>
+    public int CameraProbeThreads { get; set; } = 8;
+
     /// <summary>Look for a new version on GitHub when the window opens.</summary>
     public bool CheckUpdates { get; set; } = true;
     /// <summary>While the window stays open, look again every this many hours (0 = only at start).</summary>

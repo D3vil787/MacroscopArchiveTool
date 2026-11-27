@@ -130,6 +130,11 @@ public sealed class ArchiveScanner
         if (macroscopRetention != null) report.Warnings.AddRange(macroscopRetention.Warnings);
         report.Cameras = cameras.Values.ToList();
 
+        // The real frame rate is only known to the camera itself: Macroscop stores a placeholder (10) when
+        // "use the camera's frame rate" is on. Read-only probe; failures leave the number unknown.
+        if (config.ProbeCameraFps && macroscopRetention != null)
+            CameraFpsProbe.Enrich(report.Cameras, macroscopRetention, config, ct);
+
         ReportAnalyzer.Analyze(report, config.HeavyFactor);
         report.ScanSeconds = Math.Round(sw.Elapsed.TotalSeconds, 1);
         return report;
