@@ -10,6 +10,7 @@ var tests = new List<(string Name, Action Body)>
     ("Сканирование: объёмы, глубина, диски, отметки", ScanFakeArchive),
     ("JSON туда-обратно и сводный HTML", JsonAndHtml),
     ("NRBF: сроки камер из бинарной конфигурации", NrbfRetention),
+    ("Настройки записи: fps камеры в столбце «Запись» и в подсказке", SettingsFpsText),
     ("NRBF: дамп структуры без паролей", NrbfDumpHidesSecrets),
     ("Сроки из ConfigsBackups: новейшая копия, приоритет mat.json", RetentionFromBackups),
     ("Перенос: полная копия, время файлов, манифест, повторный запуск", CopyFullAndRerun),
@@ -174,7 +175,8 @@ static void NrbfRetention()
     Eq(7, s.PostRecordSec ?? 0, "постзапись");
     Eq(false, s.UsesCameraFps ?? true, "свой fps");
     Eq(15.0, s.Fps ?? 0, "fps из Macroscop");
-    Eq("постоянно · альтернативный поток · MPEG-4 Part 2 · ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
+    Eq(10.0, s.ArchiveStreamFps ?? 0, "fps потока в архиве (альтернативный)");
+    Eq("постоянно · альтернативный поток · MPEG-4 Part 2 · 15 к/с · архив ≤12 к/с · прореживание", SettingNames.Summary(s), "строка настроек в отчёте");
     var tree = MacroscopConfig.DumpTree(WriteTemp(FakeMacroscopConfig.Build(90, 14)));
     True(tree.Contains("== Корневой объект ==") && tree.Contains("secChannels"), "дерево файла конфигурации");
     True(!tree.Contains(FakeMacroscopConfig.Secret), "пароль не попал в дерево");
@@ -188,6 +190,37 @@ static void NrbfRetention()
     Eq(30.0, nested.MinDays ?? 0, "мин. срок во вложенном объекте (поиск владельца)");
     Eq(60.0, nested.MaxDays ?? 0, "макс. срок во вложенном объекте");
     Eq("Вложенная", nested.Name, "имя из авто-свойства");
+}
+
+static void SettingsFpsText()
+{
+    var fromMacroscop = new CameraSettings
+    {
+        ArchiveEnabled = true, ArchiveMode = 2, ArchiveStream = 0, StreamFormat = 3,
+        UsesCameraFps = false, Fps = 25, ArchiveStreamFps = 12,
+    };
+    Eq("постоянно · основной поток · H.264 · 25 к/с", SettingNames.Summary(fromMacroscop), "fps камеры в столбце «Запись»");
+    True(SettingNames.Details(fromMacroscop).Contains("Частота кадров: 25 к/с (задана в Macroscop)"), "fps и источник в подсказке");
+
+    var report = new ScanReport { ServerName = "Сервер", MachineName = "SRV" };
+    report.Cameras.Add(new CameraStat { Id = "00000000000000000000000000000001", Name = "Камера", Settings = fromMacroscop, BytesPerDay = 1 });
+    var html = HtmlReport.Render(new[] { report });
+    True(html.Contains("H.264 · 25 к/с"), "fps виден в отчёте без наведения курсора");
+    True(html.Contains("Частота кадров: 25 к/с (задана в Macroscop)"), "fps с источником во всплывающей подсказке");
+
+    // "Использовать частоту кадров камеры": Macroscop's own value is not used, the archived stream's fps is shown.
+    var fromCamera = new CameraSettings
+    {
+        ArchiveEnabled = true, ArchiveMode = 1, ArchiveStream = 1, StreamFormat = 4,
+        UsesCameraFps = true, Fps = 0, ArchiveStreamFps = 8,
+    };
+    Eq("по движению · альтернативный поток · H.265 · 8 к/с", SettingNames.Summary(fromCamera), "fps из настроек камеры");
+    True(SettingNames.Details(fromCamera).Contains("Частота кадров: 8 к/с (из настроек камеры)"), "источник fps — камера");
+
+    // Neither the camera setting nor the stream parameters carry a number: nothing is invented.
+    var unknown = new CameraSettings { ArchiveEnabled = true, ArchiveMode = 2, UsesCameraFps = true };
+    True(!SettingNames.Summary(unknown).Contains("к/с"), "без числа в конфигурации fps не выдумывается");
+    True(SettingNames.Details(unknown).Contains("Частота кадров: неизвестна (из настроек камеры)"), "неизвестный fps в подсказке");
 }
 
 static string WriteTemp(byte[] data)

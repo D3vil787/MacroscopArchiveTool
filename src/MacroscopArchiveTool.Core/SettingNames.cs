@@ -22,12 +22,25 @@ public static class SettingNames
     public static string Stream(int? code) => Code(StreamTypes, code, "поток");
     public static string Format(int? code) => Code(StreamFormats, code, "кодек");
 
+    /// <summary>
+    /// FPS at which the camera works now: Macroscop's "Частота кадров" setting, or the fps of the stream written to
+    /// the archive when the camera's own frame rate is used (isUsingCamFrameRateSetting).
+    /// </summary>
+    public static double? Fps(CameraSettings s) => s.UsesCameraFps == true
+        ? Positive(s.ArchiveStreamFps) ?? Positive(s.Fps)
+        : Positive(s.Fps) ?? Positive(s.ArchiveStreamFps);
+
+    private static double? Positive(double? v) => v is double d && d > 0 ? d : null;
+    private static string Number(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+    private static string FpsText(CameraSettings s) => Fps(s) is double f ? $"{Number(f)} к/с" : "неизвестна";
+
     /// <summary>One-line summary for the report table.</summary>
     public static string Summary(CameraSettings s)
     {
         if (s.ArchiveEnabled == false) return "запись выключена";
         var parts = new List<string> { Mode(s.ArchiveMode), Stream(s.ArchiveStream), Format(s.StreamFormat) };
-        if (s.ArchiveFpsLimitEnabled == true && s.ArchiveFpsLimit is double f) parts.Add($"≤{f.ToString("0.#", CultureInfo.InvariantCulture)} к/с");
+        if (Fps(s) is double fps) parts.Add($"{Number(fps)} к/с");
+        if (s.ArchiveFpsLimitEnabled == true && s.ArchiveFpsLimit is double f) parts.Add($"архив ≤{Number(f)} к/с");
         if (s.ThinningEnabled == true) parts.Add("прореживание");
         return string.Join(" · ", parts);
     }
@@ -46,7 +59,7 @@ public static class SettingNames
             $"Детектор движения Macroscop: {YN(s.MacroscopMotionDetector)}, детектор камеры: {YN(s.CameraMotionDetector)}",
             $"Предзапись/постзапись: {s.PreRecordSec?.ToString() ?? "?"}/{s.PostRecordSec?.ToString() ?? "?"} с",
             $"Прореживание архива: {YN(s.ThinningEnabled)}",
-            s.UsesCameraFps == true ? "Частота кадров: из настроек камеры" : $"Частота кадров: {s.Fps?.ToString(CultureInfo.InvariantCulture) ?? "?"} к/с (задана в Macroscop)",
+            $"Частота кадров: {FpsText(s)} ({(s.UsesCameraFps == true ? "из настроек камеры" : "задана в Macroscop")})",
             s.UsesCameraResolution == true ? "Разрешение: из настроек камеры" : $"Разрешение: код {s.ResolutionCode?.ToString() ?? "?"} (задано в Macroscop)",
         };
         return string.Join("\n", lines);

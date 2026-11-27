@@ -30,7 +30,10 @@ public sealed class CameraSettings
     public int? PostRecordSec { get; set; }
     public bool? ThinningEnabled { get; set; }
     public bool? UsesCameraFps { get; set; }
+    /// <summary>Macroscop's "Частота кадров" setting (liveFrameRate) — the fps the camera is set to work at.</summary>
     public double? Fps { get; set; }
+    /// <summary>FPS of the stream written to the archive, from that stream's own parameters (what the camera sends in it).</summary>
+    public double? ArchiveStreamFps { get; set; }
     public bool? UsesCameraResolution { get; set; }
     public int? ResolutionCode { get; set; }
     /// <summary>"Камера активна" switched off in the Configurator.</summary>
@@ -259,6 +262,7 @@ public static class MacroscopConfig
         int? E(string name) => EnumCode(g, M(name));
 
         if (!ch.Members.Any(m => m.Key is "archiveMode" or "archiveEnabled" or "streamFormat")) return null;
+        var archivedSubstream = M(E("archiveStreamType") == 1 ? "altSubstreamParams" : "mainSubstreamParams");
         return new CameraSettings
         {
             ArchiveEnabled = B("archiveEnabled"),
@@ -266,7 +270,7 @@ public static class MacroscopConfig
             ArchiveStream = E("archiveStreamType"),
             // The top-level streamFormat is a legacy field (0 for every camera); the real codec is in the
             // parameters of the stream that is written to the archive.
-            StreamFormat = SubstreamFormat(g, M(E("archiveStreamType") == 1 ? "altSubstreamParams" : "mainSubstreamParams")) ?? E("streamFormat"),
+            StreamFormat = SubstreamFormat(g, archivedSubstream) ?? E("streamFormat"),
             ArchiveFpsLimitEnabled = B("arcRecTempEnabled"),
             ArchiveFpsLimit = ToDouble(M("arcRecTemp")),
             MacroscopMotionDetector = B("isMotionDetectorEnabled"),
@@ -276,6 +280,7 @@ public static class MacroscopConfig
             ThinningEnabled = ThinningOn(g, M("_archiveThinningSettings")),
             UsesCameraFps = B("isUsingCamFrameRateSetting"),
             Fps = ToDouble(M("liveFrameRate")),
+            ArchiveStreamFps = SubstreamFps(g, archivedSubstream),
             UsesCameraResolution = B("isUsingCamResolutionSetting"),
             ResolutionCode = E("videoResolution"),
             Disabled = B("isDisabled"),
@@ -284,6 +289,10 @@ public static class MacroscopConfig
 
     private static int? SubstreamFormat(NrbfGraph g, object? substream)
         => g.Resolve(substream) is NrbfObject s ? EnumCode(g, s["streamFormat"]) : null;
+
+    /// <summary>FPS of a stream as stored in its own parameters (what the camera sends in that stream).</summary>
+    private static double? SubstreamFps(NrbfGraph g, object? substream)
+        => g.Resolve(substream) is NrbfObject s ? ToDouble(g.Resolve(s["liveFrameRate"])) : null;
 
     /// <summary>Enum values are serialized as an object with a single "value__" member.</summary>
     internal static int? EnumCode(NrbfGraph g, object? v)
